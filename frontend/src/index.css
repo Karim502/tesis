@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #14232B; --bg: #F2F4F5; --panel: #12353A; --accent: #1F5F5B;
+  --line: #C3CDD1; --error: #B3261E; --focus: #8CC6BF;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; }
+body { font-family: "Schibsted Grotesk", system-ui, sans-serif; background: var(--bg); color: var(--ink); line-height: 1.5; }
+.splash { padding: 48px; text-align: center; }

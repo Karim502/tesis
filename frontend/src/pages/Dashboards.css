@@ -1,0 +1,5 @@
+@import "./LoginPage.css";
+.shell__bar { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; background: var(--panel); color: #E6EFEC; }
+.shell__bar .link-btn { color: #BFE3DD; }
+.shell__main { padding: 40px 24px; max-width: 70ch; display: grid; gap: 12px; }
+.shell__main h1 { font-size: 1.8rem; letter-spacing: -0.01em; }

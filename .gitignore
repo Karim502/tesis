@@ -1,0 +1,14 @@
+# Entornos y Python
+__pycache__/
+tesis_env/
+.venv/
+venv/
+*.pyc
+
+# Node y Frontend
+node_modules/
+dist/
+build/
+
+# Variables de entorno
+.env

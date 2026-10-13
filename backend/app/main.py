@@ -15,10 +15,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # CORS con orígenes EXPLÍCITOS (nunca "*" junto a credentials).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=[
+        "http://localhost:5173",
+        "https://tesis-sepia.vercel.app" 
+    ],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Content-Type"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(auth.router, prefix="/api")

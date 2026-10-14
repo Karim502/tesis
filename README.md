@@ -17,22 +17,6 @@ frontend/src/
   pages/LoginPage.jsx · pages/Dashboards.jsx · utils/roles.js · App.jsx
 ```
 
-## Puesta en marcha
-```bash
-# 1) Base de datos
-createdb tesis_mype && psql -d tesis_mype -f backend/sql/schema.sql
-
-# 2) Backend
-cd backend && python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env     # completa DATABASE_URL y JWT_SECRET_KEY
-python -m scripts.crear_usuario          # crea un usuario por cada rol
-uvicorn app.main:app --reload --port 8000
-
-# 3) Frontend
-cd ../frontend && cp .env.example .env && npm install && npm run dev
-```
-
 ## Medidas de seguridad
 | Amenaza | Medida | Dónde |
 |---|---|---|
@@ -63,11 +47,6 @@ Bloqueo temporal de cuenta tras N fallos, lista de revocación por `jti`, refres
 | GET | `/historial` | Evaluaciones del usuario autenticado, de la más reciente a la más antigua |
 | PATCH | `/{id}/recomendaciones/{rec_id}` | Guarda el avance del checklist |
 
-Archivos nuevos: `models/evaluacion.py`, `schemas/evaluacion.py`, `services/{cuestionario,modelo_riesgo,recomendaciones}.py`, `api/routes/evaluacion.py`, `sql/evaluaciones.sql`.
-
-- `probabilidad` (0..1) es la probabilidad de incumplimiento; `score` (0..100) es el puntaje de cumplimiento (mayor = mejor).
-- Para usar XGBoost real, reemplaza solo el cuerpo de `predecir_riesgo()` en `services/modelo_riesgo.py`.
-- Para pasar de 3 a 16 preguntas, agrega entradas a `PREGUNTAS`; el wizard y la validación se adaptan solos.
 
 ## Frontend
 ```
@@ -79,12 +58,6 @@ src/pages/DashboardMype.jsx (estado pendiente/completado) · EvaluacionPage.jsx
 src/api/evaluacionApi.js · src/hooks/useHistorial.js
 ```
 Rutas: `/dashboard-mype` y `/dashboard-mype/evaluacion`.
-
-## Puesta en marcha adicional
-```bash
-psql -d tesis_mype -f backend/sql/evaluaciones.sql
-cd frontend && npm install && npm run dev      # ahora incluye Tailwind, Recharts y jsPDF
-```
 
 ---
 
@@ -102,7 +75,6 @@ cd frontend && npm install && npm run dev      # ahora incluye Tailwind, Rechart
 | Wizard en modo invitado | `features/evaluacion/SurveyForm.jsx` (`modo="invitado"`) |
 | Dashboard sin PDF ni historial | `features/evaluacion/ResultsDashboard.jsx` (`invitado`) |
 
-Consulta de la muestra: `SELECT is_guest, COUNT(*) FROM evaluaciones GROUP BY is_guest;`
 
 Notas:
 - El invitado no recibe cookie ni JWT. No se guarda IP, nombre ni correo.

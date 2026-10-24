@@ -5,7 +5,8 @@ import DashboardMype from "./pages/DashboardMype";
 import EvaluacionPage from "./pages/EvaluacionPage";
 import EvaluacionInvitadoPage from "./pages/EvaluacionInvitadoPage";
 import ResultadoInvitadoPage from "./pages/ResultadoInvitadoPage";
-import { AdminPanel, DashboardAuditor } from "./pages/Dashboards";
+import DashboardAuditor from "./pages/DashboardAuditor";
+import { AdminPanel } from "./pages/Dashboards";
 import { ROLES } from "./utils/roles";
 
 export default function App() {

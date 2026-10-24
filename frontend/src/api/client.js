@@ -15,16 +15,18 @@ export class ApiError extends Error {
  * El token nunca pasa por JavaScript: no se guarda en localStorage ni en memoria,
  * por lo que un XSS no puede extraerlo.
  */
-export async function apiFetch(path, { method = "GET", body } = {}) {
+export async function apiFetch(path, { method = "GET", body, signal } = {}) {
   let res;
   try {
     res = await fetch(`${API_URL}${path}`, {
       method,
+      signal,
       credentials: "include",
       headers: body ? { "Content-Type": "application/json" } : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
-  } catch {
+  } catch (e) {
+    if (e?.name === "AbortError") throw e; // cancelación voluntaria: no es un error de red
     throw new ApiError(0, "NETWORK_ERROR", "Sin conexión con el servidor");
   }
 

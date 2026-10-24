@@ -44,3 +44,14 @@ uvicorn==0.54.0
 watchfiles==1.3.0
 websockets==16.1.1
 wrapt==2.5.0
+pydantic[email]>=2.6
+
+# --- Explicabilidad SHAP (GET /api/evaluaciones/{id}/shap) ---
+# IMPORTANTE: instala las MISMAS versiones con las que entrenaste y guardaste modelo_ganador.joblib
+# (un archivo joblib/pickle no es portable entre versiones de lightgbm / scikit-learn).
+shap>=0.45
+lightgbm>=4.0
+scikit-learn>=1.3
+pandas>=2.0
+numpy>=1.26
+joblib>=1.3

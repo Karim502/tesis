@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = True
     # Límite del endpoint público de invitados, por IP. Ajustar según el evento (ver README).
     GUEST_RATE_LIMIT: str = "30/hour"
+
+    # --- Explicabilidad (SHAP) y comparativo sectorial ---
+    # Ruta del modelo entrenado: relativa a /backend o absoluta. Es un archivo de CONFIANZA que despliegas tú.
+    MODELO_PATH: str = "models/modelo_ganador.joblib"
+    # Etiqueta (tal como aparece en model.classes_) de la clase que significa "riesgo". En binario suele ser 1.
+    MODELO_CLASE_RIESGO: str = "1"
+    # Con menos evaluaciones que esto en el sector, el promedio se marca como "muestra insuficiente".
+    SECTOR_MUESTRA_MINIMA: int = 5
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 
     # SEGURIDAD: el algoritmo es fijo en código (no viene del token ni de la petición).

@@ -81,11 +81,17 @@ def cargar_modelo() -> ModeloCargado:
         # servidor (ruta fija en la configuración); jamás un archivo subido ni una ruta recibida en una petición.
         objeto = joblib.load(ruta)
 
-        es_pipeline = hasattr(objeto, "steps") and hasattr(objeto, "predict")
-        estimador = objeto.steps[-1][1] if es_pipeline else objeto
-        pre = objeto[:-1] if es_pipeline and len(objeto.steps) > 1 else None
+        # Cargar preprocesador separado si existe en la misma carpeta
+        ruta_pre = ruta.parent / "preprocesador.joblib"
+        if ruta_pre.is_file():
+            estimador = objeto
+            pre = joblib.load(ruta_pre)
+        else:
+            es_pipeline = hasattr(objeto, "steps") and hasattr(objeto, "predict")
+            estimador = objeto.steps[-1][1] if es_pipeline else objeto
+            pre = objeto[:-1] if es_pipeline and len(objeto.steps) > 1 else None
 
-        columnas = _columnas_de_entrada(objeto, estimador)
+        columnas = _columnas_de_entrada(pre if pre is not None else objeto, estimador)
         if not columnas:
             log.error("El modelo no expone los nombres de sus columnas de entrada")
             raise ModeloNoDisponible("configuracion")

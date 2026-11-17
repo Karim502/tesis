@@ -44,19 +44,19 @@ def evaluacion_auditable(db: Session, evaluacion_id: int) -> Evaluacion:
     Las de invitados son anónimas y quedan fuera. Lo comparten el padrón, el PATCH/PUT, el SHAP y el comparativo.
     """
     ev = db.execute(
-        select(Evaluacion).where(Evaluacion.id == evaluacion_id, Evaluacion.is_guest.is_(False))
+        select(Evaluacion).where(Evaluacion.id == evaluacion_id)
     ).scalar_one_or_none()
     if ev is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "Evaluación no encontrada"})
     return ev
 
 
-def _salida(ev: Evaluacion, mype: Usuario, auditor: Usuario | None) -> EvaluacionAuditorOut:
+def _salida(ev: Evaluacion, mype: Usuario | None, auditor: Usuario | None) -> EvaluacionAuditorOut:
     return EvaluacionAuditorOut(
         id=ev.id,
         creado_en=ev.creado_en,
-        mype_nombre=mype.nombre,
-        mype_email=mype.email,
+        mype_nombre=mype.nombre if mype else "Invitado Anónimo",
+        mype_email=mype.email if mype else "Sin correo",
         sector_economico=ev.sector_economico,
         nivel_riesgo=ev.nivel_riesgo,
         probabilidad=ev.probabilidad,
@@ -93,8 +93,7 @@ def listar_padron(
         raise _error_rango("INVALID_RISK_RANGE", "El riesgo mínimo no puede ser mayor que el máximo")
 
     # Filtros opcionales: solo se agregan los que llegaron. Todos son parámetros enlazados (sin SQL concatenado).
-    # Las evaluaciones de invitados se excluyen: son anónimas y no corresponden a una MYPE auditable.
-    filtros = [Evaluacion.is_guest.is_(False)]
+    filtros = []
     if estado_auditoria:
         filtros.append(Evaluacion.estado_auditoria == estado_auditoria.value)
     if sector_economico:
@@ -115,7 +114,7 @@ def listar_padron(
     auditor = aliased(Usuario)
     filas = db.execute(
         select(Evaluacion, Usuario, auditor)
-        .join(Usuario, Usuario.id == Evaluacion.user_id)
+        .outerjoin(Usuario, Usuario.id == Evaluacion.user_id)  # <-- SE CAMBIÓ A outerjoin
         .outerjoin(auditor, auditor.id == Evaluacion.auditado_por)
         .where(*filtros)
         .order_by(Evaluacion.creado_en.desc(), Evaluacion.id.desc())  # id desempata: paginación estable

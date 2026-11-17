@@ -206,3 +206,14 @@ def validar_respuestas(respuestas: dict):
     faltantes = claves_esperadas - claves_recibidas
     if faltantes:
         raise RespuestasInvalidas(f"Faltan las siguientes respuestas: {faltantes}")
+
+# Definimos el nombre exacto de la pregunta que contiene el sector
+SECTOR_KEY = "var_2_subsector_comercial"
+
+# Definimos la función que Claude usó para formatear las etiquetas en los gráficos
+def etiqueta_sector(valor):
+    if not valor:
+        return "Desconocido"
+    # Como los valores son textos largos (ej. "Comercio de alimentos..."), 
+    # podrías dejarlo tal cual o recortarlo. Lo dejaremos tal cual.
+    return str(valor)

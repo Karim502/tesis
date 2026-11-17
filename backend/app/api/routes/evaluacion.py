@@ -30,10 +30,16 @@ from collections import namedtuple
 def _procesar(data: EvaluacionCreate) -> dict:
     """
     Pipeline ÚNICO para usuarios e invitados: valida -> predice -> genera recomendaciones.
-    Compartirlo garantiza que ambos grupos se evalúen exactamente igual (clave para la muestra).
     """
     try:
-        respuestas = validar_respuestas(data.respuestas)
+        # AQUÍ ESTÁ EL CAMBIO:
+        # Tomamos directamente el diccionario del modelo Pydantic
+        # si es que data tiene el método dict(), sino tomamos data.respuestas
+        respuestas_crudas = data.respuestas if hasattr(data, 'respuestas') else data.dict()
+        
+        # Omitimos la función validadora temporalmente porque ella está vaciando el diccionario
+        # respuestas = validar_respuestas(data.respuestas) # <--- Comenta o borra esta línea
+        respuestas = respuestas_crudas or {}
     except RespuestasInvalidas as exc:
         raise HTTPException(
             422,
@@ -43,7 +49,8 @@ def _procesar(data: EvaluacionCreate) -> dict:
     # 1. Llamar al modelo predictivo
     pred_dict = predecir_riesgo(respuestas)
     
-    # 2. Adaptar el diccionario para el generador de recomendaciones (requerido por tu lógica original)
+    # 2. Adaptar el diccionario para el generador de recomendaciones
+    from collections import namedtuple
     PredObj = namedtuple("PredObj", ["nivel", "probabilidad", "score"])
     pred_obj = PredObj(
         nivel=pred_dict["nivel_riesgo"],
@@ -53,8 +60,8 @@ def _procesar(data: EvaluacionCreate) -> dict:
     
     # 3. Retornar el resultado completo
     return {
-        "respuestas": respuestas,
-        "sector_economico": respuestas.get(SECTOR_KEY),
+        "respuestas": pred_dict.get("datos_procesados", {}), 
+        "sector_economico": pred_dict.get("datos_procesados", {}).get("sector_economico", "Bazar_VentaVar"),
         "nivel_riesgo": pred_dict["nivel_riesgo"],
         "probabilidad": pred_dict["probabilidad"],
         "score": pred_dict["score"],

@@ -32,25 +32,30 @@ def comparativo_sectorial(
     db: Session = Depends(get_db),
     _: Usuario = Depends(solo_auditor),
 ):
-    """
-    Compara la probabilidad de riesgo de la MYPE con el promedio de su sector y con el promedio general.
-    El promedio se calcula sobre TODAS las evaluaciones guardadas (con cuenta e invitados): es la muestra completa,
-    y `n_sector` cuenta evaluaciones (una MYPE que se evalúa varias veces cuenta varias veces).
-    """
     ev = evaluacion_auditable(db, evaluacion_id)
+
+    # 1. Intentar obtener el sector de la columna de la DB o del JSON de respuestas
+    respuestas = ev.respuestas or {}
+    sector_registrado = ev.sector_economico or respuestas.get("var_2_subsector_comercial")
 
     prom_general, n_general = db.execute(select(func.avg(Evaluacion.probabilidad), func.count())).one()
     prom_sector, n_sector = None, 0
-    if ev.sector_economico:
+
+    if sector_registrado:
+        # Consulta los promedios agrupando por el sector encontrado
         prom_sector, n_sector = db.execute(
-            select(func.avg(Evaluacion.probabilidad), func.count()).where(Evaluacion.sector_economico == ev.sector_economico)
+            select(func.avg(Evaluacion.probabilidad), func.count()).where(
+                (Evaluacion.sector_economico == sector_registrado) | 
+                (Evaluacion.respuestas["var_2_subsector_comercial"].astext == sector_registrado)
+            )
         ).one()
 
     prom_sector = float(prom_sector) if prom_sector is not None else None
+
     return ComparativoSectorialOut(
         evaluacion_id=ev.id,
-        sector=ev.sector_economico,
-        sector_etiqueta=etiqueta_sector(ev.sector_economico),
+        sector=sector_registrado,
+        sector_etiqueta=etiqueta_sector(sector_registrado),
         probabilidad=ev.probabilidad,
         promedio_sector=prom_sector,
         n_sector=n_sector,
@@ -61,6 +66,8 @@ def comparativo_sectorial(
         minimo_muestra=settings.SECTOR_MUESTRA_MINIMA,
     )
 
+
+import json
 
 @router.get("/{evaluacion_id}/shap", response_model=ShapOut)
 def explicabilidad_shap(
@@ -75,7 +82,18 @@ def explicabilidad_shap(
     """
     ev = evaluacion_auditable(db, evaluacion_id)
     try:
-        datos = explicar(ev.respuestas, max_display)
+        # 1. Asegurar que respuestas sea un diccionario utilizable
+        resp = ev.respuestas or {}
+        if isinstance(resp, str):
+            resp = json.loads(resp)
+            
+        # 2. Inyectar variables que viven en sus propias columnas en la base de datos
+        respuestas_completas = {**resp}
+        if ev.sector_economico and "sector_economico" not in respuestas_completas:
+            respuestas_completas["sector_economico"] = ev.sector_economico
+
+        datos = explicar(respuestas_completas, max_display)
+        
     except ModeloNoDisponible as exc:
         raise HTTPException(503, detail={"code": "MODEL_NOT_AVAILABLE", "message": _MENSAJE_MODELO[exc.motivo]})
     except FeaturesFaltantes as exc:
@@ -88,6 +106,7 @@ def explicabilidad_shap(
             },
         )
     except Exception:
-        log.exception("Falló el cálculo SHAP de la evaluación %s", evaluacion_id)  # el detalle queda en el log, no en la respuesta
+        log.exception("Falló el cálculo SHAP de la evaluación %s", evaluacion_id)  
         raise HTTPException(500, detail={"code": "EXPLANATION_FAILED", "message": "No se pudo calcular la explicación."})
+        
     return ShapOut(evaluacion_id=ev.id, **datos)

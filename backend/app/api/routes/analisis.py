@@ -1,7 +1,7 @@
 """Análisis por evaluación para el Auditor: comparativo sectorial y explicabilidad SHAP. Solo rol AUDITOR."""
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from app.schemas.analisis import ComparativoSectorialOut, ShapOut
 from app.services.cuestionario import etiqueta_sector
 from app.services.explicabilidad import ModeloNoDisponible, explicar
 from app.services.features import FeaturesFaltantes
+from app.services.bitacora import registrar, ya_registrado_reciente
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/evaluaciones", tags=["analisis"])
@@ -29,10 +30,21 @@ _MENSAJE_MODELO = {
 @router.get("/{evaluacion_id}/comparativo-sectorial", response_model=ComparativoSectorialOut)
 def comparativo_sectorial(
     evaluacion_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    _: Usuario = Depends(solo_auditor),
+    auditor: Usuario = Depends(solo_auditor),
 ):
     ev = evaluacion_auditable(db, evaluacion_id)
+
+    if not ya_registrado_reciente(db, auditor, "EVALUACION_CONSULTADA", ev.id):
+        registrar(
+            db,
+            auditor,
+            "EVALUACION_CONSULTADA",
+            recurso_tipo="evaluacion",
+            recurso_id=ev.id,
+            request=request,
+        )
 
     # 1. Intentar obtener el sector de la columna de la DB o del JSON de respuestas
     respuestas = ev.respuestas or {}

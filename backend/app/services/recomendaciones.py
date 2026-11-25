@@ -17,9 +17,11 @@ def generar_recomendaciones(respuestas: dict, pred) -> list:
     # ------------------------------------------------------------------
     # 1. EVALUACIÓN DE REGLAS ESPECÍFICAS (LENGUAJE SENCILLO)
     # ------------------------------------------------------------------
+    
+    respuestas = respuestas or {}
 
     # Informalidad (var_1)
-    personeria = respuestas.get("var_1_personeria_juridica", "")
+    personeria = str(respuestas.get("var_1_personeria_juridica") or "")
     if "Ninguna" in personeria or "Sin RUC" in personeria:
         recomendaciones.append({
             "id": "rec_formalizacion",

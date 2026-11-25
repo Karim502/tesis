@@ -10,20 +10,23 @@ export class ApiError extends Error {
 }
 
 /**
- * Wrapper de fetch.
- * `credentials: "include"` hace que el navegador envíe la cookie HttpOnly con el JWT.
- * El token nunca pasa por JavaScript: no se guarda en localStorage ni en memoria,
- * por lo que un XSS no puede extraerlo.
+- Wrapper de fetch.
+- `credentials: "include"` hace que el navegador envíe la cookie HttpOnly con el JWT.
+- El token nunca pasa por JavaScript: no se guarda en localStorage ni en memoria,
+- por lo que un XSS no puede extraerlo.
  */
 export async function apiFetch(path, { method = "GET", body, signal } = {}) {
+  const isFormData = body instanceof FormData;
+
   let res;
   try {
     res = await fetch(`${API_URL}${path}`, {
       method,
       signal,
       credentials: "include",
-      headers: body ? { "Content-Type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
+      // Si es FormData, NO se envía Content-Type manual para que el navegador ponga el boundary correcto
+      headers: body && !isFormData ? { "Content-Type": "application/json" } : undefined,
+      body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
     });
   } catch (e) {
     if (e?.name === "AbortError") throw e; // cancelación voluntaria: no es un error de red
@@ -36,7 +39,12 @@ export async function apiFetch(path, { method = "GET", body, signal } = {}) {
   if (!res.ok) {
     const detail = data?.detail;
     const isObj = detail && typeof detail === "object" && !Array.isArray(detail);
-    throw new ApiError(res.status, isObj ? detail.code : null, isObj ? detail.message : "Error", isObj ? detail : null);
+    throw new ApiError(
+      res.status,
+      isObj ? detail.code : null,
+      isObj ? detail.message : (typeof detail === "string" ? detail : "Error"),
+      isObj ? detail : null
+    );
   }
   return data;
 }

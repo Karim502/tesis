@@ -45,6 +45,12 @@ class ModeloCargado:
 
 
 def ruta_modelo() -> Path:
+    """Modelo que sirve la API: la versión ACTIVA del registro (panel MLOps) o, si no hay, MODELO_PATH."""
+    from app.services.modelos import ruta_activa  # import perezoso: modelos.py importa este módulo
+
+    activa = ruta_activa()
+    if activa is not None:
+        return activa
     p = Path(settings.MODELO_PATH)
     return p if p.is_absolute() else RAIZ_BACKEND / p
 
@@ -63,10 +69,17 @@ def _columnas_de_entrada(objeto: Any, estimador: Any) -> list[str] | None:
     return None
 
 
-# lru_cache NO guarda excepciones: si el modelo aún no estaba, basta con copiarlo; no hace falta reiniciar.
-@lru_cache(maxsize=1)
 def cargar_modelo() -> ModeloCargado:
+    """Modelo vigente. La caché va por (ruta, fecha del archivo): al activar otra versión o reemplazar el archivo
+    se recarga sola, sin reiniciar el servidor."""
     ruta = ruta_modelo()
+    mtime = ruta.stat().st_mtime_ns if ruta.is_file() else 0
+    return cargar_modelo_de(ruta, mtime)
+
+
+# lru_cache NO guarda excepciones: si el modelo aún no estaba, basta con copiarlo; no hace falta reiniciar.
+@lru_cache(maxsize=2)
+def cargar_modelo_de(ruta: Path, _mtime_ns: int = 0) -> ModeloCargado:
     if not ruta.is_file():
         raise ModeloNoDisponible("archivo_ausente")
     try:
@@ -81,17 +94,11 @@ def cargar_modelo() -> ModeloCargado:
         # servidor (ruta fija en la configuración); jamás un archivo subido ni una ruta recibida en una petición.
         objeto = joblib.load(ruta)
 
-        # Cargar preprocesador separado si existe en la misma carpeta
-        ruta_pre = ruta.parent / "preprocesador.joblib"
-        if ruta_pre.is_file():
-            estimador = objeto
-            pre = joblib.load(ruta_pre)
-        else:
-            es_pipeline = hasattr(objeto, "steps") and hasattr(objeto, "predict")
-            estimador = objeto.steps[-1][1] if es_pipeline else objeto
-            pre = objeto[:-1] if es_pipeline and len(objeto.steps) > 1 else None
+        es_pipeline = hasattr(objeto, "steps") and hasattr(objeto, "predict")
+        estimador = objeto.steps[-1][1] if es_pipeline else objeto
+        pre = objeto[:-1] if es_pipeline and len(objeto.steps) > 1 else None
 
-        columnas = _columnas_de_entrada(pre if pre is not None else objeto, estimador)
+        columnas = _columnas_de_entrada(objeto, estimador)
         if not columnas:
             log.error("El modelo no expone los nombres de sus columnas de entrada")
             raise ModeloNoDisponible("configuracion")
@@ -124,6 +131,9 @@ def cargar_modelo() -> ModeloCargado:
     except Exception as exc:  # pickle de otra versión, estimador no soportado por TreeExplainer, etc.
         log.exception("No se pudo cargar el modelo de %s", ruta.name)
         raise ModeloNoDisponible("carga") from exc
+
+
+cargar_modelo.cache_clear = cargar_modelo_de.cache_clear  # compatibilidad con el uso anterior
 
 
 def precalentar() -> None:

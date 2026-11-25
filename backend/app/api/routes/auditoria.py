@@ -1,7 +1,7 @@
 """Módulo del Auditor: padrón de evaluaciones con filtros avanzados y gestión de estado/notas. Solo rol AUDITOR."""
 from datetime import date, datetime, time, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
@@ -10,6 +10,7 @@ from app.db.session import get_db
 from app.models.evaluacion import EstadoAuditoria, Evaluacion
 from app.models.user import Rol, Usuario
 from app.schemas.auditoria import AuditoriaPatch, AuditoriaUpdate, EvaluacionAuditorOut, PadronOut
+from app.services.bitacora import registrar
 
 router = APIRouter(prefix="/evaluaciones", tags=["auditoria"])
 
@@ -129,6 +130,7 @@ def listar_padron(
 def parchear_auditoria(
     evaluacion_id: int,
     data: AuditoriaPatch,
+    request: Request,
     db: Session = Depends(get_db),
     auditor: Usuario = Depends(solo_auditor),
 ):
@@ -137,20 +139,39 @@ def parchear_auditoria(
     Si nada cambia realmente, no se toca la trazabilidad (quién/cuándo). Devuelve el registro actual.
     """
     ev = evaluacion_auditable(db, evaluacion_id)
+    estado_antes = ev.estado_auditoria
     cambio = False
+    notas_modificadas = False
+
     if "estado_auditoria" in data.model_fields_set and data.estado_auditoria.value != ev.estado_auditoria:
         ev.estado_auditoria = data.estado_auditoria.value
         cambio = True
     if "notas_auditor" in data.model_fields_set and data.notas_auditor != ev.notas_auditor:
         ev.notas_auditor = data.notas_auditor
         cambio = True
+        notas_modificadas = True
+
     if cambio:
         ev.auditado_por = auditor.id  # SEGURIDAD: el auditor sale del token, jamás del cuerpo de la petición
         ev.auditado_en = datetime.now(timezone.utc)
         db.commit()
         db.refresh(ev)
-    return _salida_actual(db, ev)
 
+        detalle = {}
+        if ev.estado_auditoria != estado_antes:
+            detalle["estado"] = {"antes": estado_antes, "despues": ev.estado_auditoria}
+        if notas_modificadas:
+            detalle["notas_modificadas"] = True
+        registrar(
+            db,
+            auditor,
+            "AUDITORIA_ACTUALIZADA",
+            recurso_tipo="evaluacion",
+            recurso_id=ev.id,
+            detalle=detalle,
+            request=request,
+        )
+    return _salida_actual(db, ev)
 
 @router.put("/{evaluacion_id}/auditoria", response_model=EvaluacionAuditorOut)
 def actualizar_auditoria(

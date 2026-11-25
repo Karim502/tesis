@@ -6,7 +6,7 @@ import EvaluacionPage from "./pages/EvaluacionPage";
 import EvaluacionInvitadoPage from "./pages/EvaluacionInvitadoPage";
 import ResultadoInvitadoPage from "./pages/ResultadoInvitadoPage";
 import DashboardAuditor from "./pages/DashboardAuditor";
-import { AdminPanel } from "./pages/Dashboards";
+import AdminDashboard from "./pages/AdminDashboard";
 import { ROLES } from "./utils/roles";
 
 export default function App() {
@@ -29,7 +29,7 @@ export default function App() {
         <Route path="/dashboard-auditor" element={<DashboardAuditor />} />
       </Route>
       <Route element={<ProtectedRoute allowedRoles={[ROLES.ADMIN]} />}>
-        <Route path="/admin-panel" element={<AdminPanel />} />
+        <Route path="/admin-panel" element={<AdminDashboard />} />
       </Route>
 
       <Route path="*" element={<Navigate to="/" replace />} />

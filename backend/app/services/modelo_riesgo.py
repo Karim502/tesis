@@ -1,21 +1,11 @@
-import os
 import json
-import joblib
+import logging
 import pandas as pd
-from typing import TypedDict, List
 
-# Rutas a los modelos guardados
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PREPROCESADOR_PATH = os.path.join(BASE_DIR, "ml_models", "preprocesador.joblib")
-MODELO_PATH = os.path.join(BASE_DIR, "ml_models", "modelo_ganador.joblib")
+from app.services.explicabilidad import ModeloNoDisponible, cargar_modelo
 
-# Cargar los artefactos
-try:
-    preprocesador = joblib.load(PREPROCESADOR_PATH)
-    modelo = joblib.load(MODELO_PATH)
-except Exception as e:
-    print(f"Advertencia: No se pudieron cargar los modelos ML. Error: {e}")
-    preprocesador, modelo = None, None
+log = logging.getLogger(__name__)
+
 
 def _asegurar_diccionario(datos) -> dict:
     if not datos: return {}
@@ -38,6 +28,7 @@ def predecir_riesgo(respuestas) -> dict:
                 return str(value).strip()
         return valor_por_defecto
 
+
     # 1. PARSEO SÚPER FLEXIBLE (Busca fragmentos de la llave y del valor)
     tipo_str = buscar_valor("personeria").lower()
     if "ninguna" in tipo_str or "sin ruc" in tipo_str: tipo_contribuyente = "No_Registrado"
@@ -56,13 +47,32 @@ def predecir_riesgo(respuestas) -> dict:
     elif "sin hallazgos" in hist_str: historial = "Auditado_Sin_Hallazgos"
     else: historial = "Nunca_Auditado"
 
-    def parse_dinero(val):
-        if not val or "aplica" in val.lower(): return -1
-        if "menos de" in val.lower(): return 25000
-        if "50,001" in val: return 100000
-        if "150,001" in val: return 225000
-        if "300,001" in val: return 550000
-        if "más de" in val.lower(): return 1000000
+    def parse_dinero(val: str) -> int:
+        if not val or "aplica" in val.lower():
+            return -1
+        val_limpio = val.strip()
+        mapa_exacto = {
+            "Menos de S/ 50,000": 25000,
+            "De S/ 50,001 a S/ 150,000": 100000,
+            "De S/ 150,001 a S/ 300,000": 225000,
+            "De S/ 300,001 a S/ 800,000": 550000,
+            "Más de S/ 800,000": 1000000,
+        }
+        if val_limpio in mapa_exacto:
+            return mapa_exacto[val_limpio]
+
+        # Respaldo ordenado de mayor a menor para evitar falsos positivos por subcadenas
+        val_low = val_limpio.lower()
+        if "más de" in val_low:
+            return 1000000
+        if "300,001" in val_limpio:
+            return 550000
+        if "150,001" in val_limpio:
+            return 225000
+        if "50,001" in val_limpio:
+            return 100000
+        if "menos de" in val_low:
+            return 25000
         return -1
 
     def parse_antiguedad(val):
@@ -107,6 +117,7 @@ def predecir_riesgo(respuestas) -> dict:
         if "más de" in val.lower(): return 120
         return 0
 
+
     # 2. CONSTRUCCIÓN DEL DICCIONARIO
     datos_modelo = {}
     datos_modelo["tipo_contribuyente"] = tipo_contribuyente
@@ -128,6 +139,7 @@ def predecir_riesgo(respuestas) -> dict:
     datos_modelo["retraso_declaracion_dias"] = parse_conteo(buscar_valor("mora"))
     datos_modelo["declaraciones_rectificatorias"] = parse_conteo(buscar_valor("rectificatorias"))
 
+
     # 3. DERIVADAS
     if datos_modelo["tipo_contribuyente"] == "No_Registrado" or ingresos <= 0:
         datos_modelo["ratio_gastos_ingresos"] = -1.0
@@ -140,32 +152,48 @@ def predecir_riesgo(respuestas) -> dict:
     # print("\n--- DATOS PROCESADOS LISTOS PARA EL MODELO ---")
     # print(json.dumps(datos_modelo, indent=2, ensure_ascii=False))
 
-    if preprocesador is None or modelo is None:
-        return {"probabilidad": 0.5, "nivel_riesgo": "Medio", "score": 50, "recomendaciones": [], "datos_procesados": datos_modelo}
 
-    # 4. CREACIÓN DEL DATAFRAME
+    # 4. CARGA DINÁMICA DEL PIPELINE ACTIVO (MLOps o MODELO_PATH)
     try:
-        columnas_esperadas = preprocesador.feature_names_in_
-        df_entrada = pd.DataFrame([datos_modelo], columns=columnas_esperadas)
-    except AttributeError:
-        df_entrada = pd.DataFrame([datos_modelo])
+        m = cargar_modelo()
+    except ModeloNoDisponible as exc:
+        log.warning("Modelo no disponible para predicción (%s); devolviendo respaldo.", exc.motivo)
+        return {
+            "probabilidad": 0.5,
+            "nivel_riesgo": "Medio",
+            "score": 50,
+            "recomendaciones": [],
+            "datos_procesados": datos_modelo,
+        }
 
+
+    # 5. CREACIÓN DEL DATAFRAME CON LAS COLUMNAS DEL PIPELINE
+    df_entrada = pd.DataFrame([datos_modelo], columns=list(m.columnas))
+
+    cols_categoricas = {"tipo_contribuyente", "sector_economico", "historial_auditoria"}
     for col in df_entrada.columns:
-        df_entrada[col] = pd.to_numeric(df_entrada[col], errors='ignore')
-    
-    # 5. PREDICCIÓN
-    X_procesado = preprocesador.transform(df_entrada)
-    prob_evasion = float(modelo.predict_proba(X_procesado)[0, 1])
-    score_final = int(prob_evasion * 100)
+        if col not in cols_categoricas:
+            df_entrada[col] = pd.to_numeric(df_entrada[col], errors="coerce")
 
-    if score_final < 33: nivel_riesgo = "Bajo"
-    elif score_final < 66: nivel_riesgo = "Medio"
-    else: nivel_riesgo = "Alto"
+
+    # 6. PREDICCIÓN
+    X_procesado = m.preprocesador.transform(df_entrada) if m.preprocesador is not None else df_entrada
+    idx = m.idx_clase if m.idx_clase is not None else 1
+    prob_evasion = float(m.estimador.predict_proba(X_procesado)[0, idx])
+
+    if prob_evasion < 0.33:
+        nivel_riesgo = "Bajo"
+    elif prob_evasion < 0.66:
+        nivel_riesgo = "Medio"
+    else:
+        nivel_riesgo = "Alto"
+
+    score_cumplimiento = 100 - round(prob_evasion * 100)
 
     return {
         "probabilidad": prob_evasion,
         "nivel_riesgo": nivel_riesgo,
-        "score": score_final,
+        "score": score_cumplimiento,
         "recomendaciones": [],
-        "datos_procesados": datos_modelo 
+        "datos_procesados": datos_modelo,
     }

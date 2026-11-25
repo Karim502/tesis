@@ -32,42 +32,35 @@ def _procesar(data: EvaluacionCreate) -> dict:
     Pipeline ÚNICO para usuarios e invitados: valida -> predice -> genera recomendaciones.
     """
     try:
-        # AQUÍ ESTÁ EL CAMBIO:
-        # Tomamos directamente el diccionario del modelo Pydantic
-        # si es que data tiene el método dict(), sino tomamos data.respuestas
-        respuestas_crudas = data.respuestas if hasattr(data, 'respuestas') else data.dict()
-        
-        # Omitimos la función validadora temporalmente porque ella está vaciando el diccionario
-        # respuestas = validar_respuestas(data.respuestas) # <--- Comenta o borra esta línea
-        respuestas = respuestas_crudas or {}
+        respuestas_crudas = data.respuestas if hasattr(data, "respuestas") else data.model_dump()
+        respuestas = validar_respuestas(respuestas_crudas or {})
     except RespuestasInvalidas as exc:
         raise HTTPException(
             422,
             detail={"code": "INVALID_ANSWERS", "message": "Revisa tus respuestas", "errores": getattr(exc, "errores", str(exc))},
         )
-    
+
     # 1. Llamar al modelo predictivo
     pred_dict = predecir_riesgo(respuestas)
-    
+
     # 2. Adaptar el diccionario para el generador de recomendaciones
     from collections import namedtuple
     PredObj = namedtuple("PredObj", ["nivel", "probabilidad", "score"])
     pred_obj = PredObj(
         nivel=pred_dict["nivel_riesgo"],
         probabilidad=pred_dict["probabilidad"],
-        score=pred_dict["score"]
+        score=pred_dict["score"],
     )
-    
-    # 3. Retornar el resultado completo
+
+    # 3. Guardar respuestas CRUDAS en BD para que SHAP y comparativo sectorial tengan los datos reales
     return {
-        "respuestas": pred_dict.get("datos_procesados", {}), 
+        "respuestas": respuestas,
         "sector_economico": pred_dict.get("datos_procesados", {}).get("sector_economico", "Bazar_VentaVar"),
         "nivel_riesgo": pred_dict["nivel_riesgo"],
         "probabilidad": pred_dict["probabilidad"],
         "score": pred_dict["score"],
         "recomendaciones": generar_recomendaciones(respuestas, pred_obj),
     }
-
 
 # --------------------------------------------------------------------------- público
 

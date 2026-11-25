@@ -46,3 +46,6 @@ def require_roles(*roles: Rol):
         return user
 
     return checker
+
+# Guard del rol Administrador (supervisor técnico). Úsalo como dependencia: `Depends(get_current_admin_user)`.
+get_current_admin_user = require_roles(Rol.ADMIN)

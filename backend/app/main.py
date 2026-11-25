@@ -1,7 +1,7 @@
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -10,7 +10,7 @@ from app.api.routes import admin, analisis, auditoria, auth, evaluacion, panels
 from app.core.config import settings
 from app.core.rate_limit import limiter
 from app.services.explicabilidad import precalentar
-
+from app.core.csrf import verificar_origen
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -18,7 +18,11 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Tesis MYPE - API", lifespan=lifespan)
+app = FastAPI(
+    title="Tesis MYPE - API",
+    lifespan=lifespan,
+    dependencies=[Depends(verificar_origen)],
+)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 

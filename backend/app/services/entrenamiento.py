@@ -10,6 +10,7 @@ from app.db.session import SessionLocal
 from app.models.model_version import EstadoModelo, ModelVersion
 from app.services import modelos
 from app.services.explicabilidad import RAIZ_BACKEND, ModeloNoDisponible, cargar_modelo
+from app.services.almacenamiento import publicar
 
 log = logging.getLogger(__name__)
 
@@ -150,6 +151,7 @@ def ejecutar_entrenamiento(version_id: int, ruta_csv: str, activar_si_mejora: bo
             joblib.dump(modelo, tmp)
             os.replace(tmp, destino)
             v.sha256 = modelos.sha256_de(destino)
+            publicar(destino, v.sha256)
 
             v.estado, v.etapa = EstadoModelo.CANDIDATO.value, None
             v.finalizado_en = datetime.now(timezone.utc)

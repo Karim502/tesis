@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
@@ -12,7 +13,8 @@ from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.model_version import EstadoModelo, ModelVersion
 from app.services.cuestionario import PREGUNTAS
-from app.services.explicabilidad import RAIZ_BACKEND, ModeloNoDisponible, cargar_modelo_de
+from app.services.explicabilidad import ModeloNoDisponible, cargar_modelo_de
+from app.services.almacenamiento import AlmacenamientoError, asegurar_local, carpeta_local
 
 log = logging.getLogger(__name__)
 
@@ -24,9 +26,7 @@ class ActivacionInvalida(Exception):
 
 
 def carpeta_modelos() -> Path:
-    p = Path(settings.MODELS_DIR)
-    return p if p.is_absolute() else RAIZ_BACKEND / p
-
+    return carpeta_local()
 
 def ruta_de(v: ModelVersion) -> Path:
     # Solo el NOMBRE del archivo: aunque la BD contuviera "../../etc/x", jamás se sale de la carpeta de modelos.
@@ -57,10 +57,12 @@ def ruta_activa() -> Path | None:
     ruta = None
     try:
         with SessionLocal() as db:
-            v = db.execute(select(ModelVersion).where(ModelVersion.estado == EstadoModelo.ACTIVO.value)).scalar_one_or_none()
-            ruta = ruta_de(v) if v else None
-    except Exception:  # si la BD falla, se sigue con MODELO_PATH en vez de tumbar la explicabilidad
-        log.exception("No se pudo consultar el modelo activo")
+            v = db.execute(
+                select(ModelVersion).where(ModelVersion.estado == EstadoModelo.ACTIVO.value)
+            ).scalar_one_or_none()
+            ruta = asegurar_local(v.archivo, v.sha256) if v else None
+    except Exception:  # si la BD o S3 fallan, se sigue con MODELO_PATH en vez de tumbar la explicabilidad
+        log.exception("No se pudo consultar o descargar el modelo activo")
     _cache.update(hasta=ahora + _TTL_S, ruta=ruta)
     return ruta
 
@@ -78,17 +80,24 @@ def activar(db: Session, v: ModelVersion, admin_id: int | None) -> list[str]:
     """
     if v.estado not in (EstadoModelo.CANDIDATO.value, EstadoModelo.ARCHIVADO.value, EstadoModelo.ACTIVO.value):
         raise ActivacionInvalida("INVALID_STATE", f"Una versión en estado {v.estado} no se puede activar.")
-    ruta = ruta_de(v)
+
+
+    try:
+        ruta = asegurar_local(v.archivo, v.sha256)
+    except AlmacenamientoError as exc:
+        raise ActivacionInvalida("MODEL_FILE_MISSING", str(exc)) from exc
     if not ruta.is_file():
         raise ActivacionInvalida("MODEL_FILE_MISSING", "El archivo de esta versión ya no existe en el servidor.")
     if v.sha256 and sha256_de(ruta) != v.sha256:
         raise ActivacionInvalida("MODEL_FILE_ALTERED", "El archivo no coincide con la huella registrada; no se activará.")
+
     try:
         cargado = cargar_modelo_de(ruta, ruta.stat().st_mtime_ns)
     except ModeloNoDisponible as exc:
         raise ActivacionInvalida("MODEL_NOT_LOADABLE", f"El modelo no se pudo cargar ({exc.motivo}).") from exc
 
-# Advertencia: columnas que el cuestionario ni el pipeline de features producen => SHAP respondería FEATURES_MISSING.
+
+    # Advertencia: columnas que el cuestionario ni el pipeline de features producen => SHAP respondería FEATURES_MISSING.
     conocidas = {p["id"] for p in PREGUNTAS} | {
         "regimen",
         "sector_economico",

@@ -108,6 +108,22 @@ def activar(db: Session, v: ModelVersion, admin_id: int | None) -> list[str]:
         "sector_economico",
         "emite_comprobantes",
         "ingresos_mensuales",
+        "tipo_contribuyente",
+        "sector_economico",
+        "antiguedad_anos",
+        "numero_empleados_formales",
+        "ingresos_declarados",
+        "gastos_deducibles",
+        "ratio_gastos_ingresos",
+        "porcentaje_efectivo",
+        "margen_utilidad_declarado",
+        "facturas_anuladas",
+        "porcentaje_notas_credito",
+        "compras_proveedores_nuevos_pct",
+        "concentracion_cliente_principal",
+        "historial_auditoria",
+        "retraso_declaracion_dias",
+        "declaraciones_rectificatorias"
     }
     ajenas = [c for c in cargado.columnas if c not in conocidas]
     advertencias = []

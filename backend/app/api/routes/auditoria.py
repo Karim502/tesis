@@ -62,13 +62,12 @@ def _salida(ev: Evaluacion, mype: Usuario | None, auditor: Usuario | None) -> Ev
         nivel_riesgo=ev.nivel_riesgo,
         probabilidad=ev.probabilidad,
         score=ev.score,
-        respuestas=ev.respuestas,
+        respuestas=ev.respuestas or {},
         estado_auditoria=ev.estado_auditoria,
         notas_auditor=ev.notas_auditor,
         auditado_en=ev.auditado_en,
         auditado_por_nombre=auditor.nombre if auditor else None,
     )
-
 
 def _salida_actual(db: Session, ev: Evaluacion) -> EvaluacionAuditorOut:
     revisor = db.get(Usuario, ev.auditado_por) if ev.auditado_por else None

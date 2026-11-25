@@ -36,17 +36,26 @@ function dibujarMedidor(doc, cx, cy, r, valor) {
 }
 
 export async function generarConstanciaPdf({ usuario, evaluacion }) {
-  const doc = new jsPDF({ unit: "mm", format: "a4" }); // una sola página, lista para imprimir
-  const color = rgb(NIVEL_COLOR[evaluacion.nivel_riesgo]);
-  const valor = pct(evaluacion.probabilidad);
+  const doc = new jsPDF({ unit: "mm", format: "a4" }); // una sola página
+  
+  // 1. Manejo ultra-seguro de variables opcionales/invitado
+  const nombreTitular = usuario?.nombre_completo || usuario?.nombre || "Usuario Invitado (Diagnóstico Rápido)";
+  const evaluacionId = evaluacion?.id ? `N.º ${evaluacion.id}` : "Consulta Anónima";
+  const fechaEval = evaluacion?.creado_en ? formatFecha(evaluacion.creado_en) : formatFecha(new Date().toISOString());
+  
+  const nivelRiesgoStr = evaluacion?.nivel_riesgo || "Medio";
+  const colorHex = NIVEL_COLOR[nivelRiesgoStr] || "#64748B";
+  const color = rgb(colorHex);
+  const valor = pct(evaluacion?.probabilidad ?? 0);
+  const score = evaluacion?.score ?? 0;
 
   // Encabezado
   doc.setTextColor(20, 35, 43);
   doc.setFont("helvetica", "bold").setFontSize(19);
   doc.text("Constancia de evaluación de riesgo fiscal", 105, 24, { align: "center" });
   doc.setFont("helvetica", "normal").setFontSize(11);
-  doc.text(`Titular: ${usuario.nombre}`, 105, 33, { align: "center" });
-  doc.text(`Fecha de evaluación: ${formatFecha(evaluacion.creado_en)}   |   N.º ${evaluacion.id}`, 105, 39, { align: "center" });
+  doc.text(`Titular: ${nombreTitular}`, 105, 33, { align: "center" });
+  doc.text(`Fecha de evaluación: ${fechaEval}   |   ${evaluacionId}`, 105, 39, { align: "center" });
   doc.setDrawColor(195, 205, 209).setLineWidth(0.3).line(20, 45, 190, 45);
 
   // Medidor + resultado
@@ -55,13 +64,13 @@ export async function generarConstanciaPdf({ usuario, evaluacion }) {
   doc.setFont("helvetica", "bold").setFontSize(30).setTextColor(20, 35, 43);
   doc.text(`${valor}%`, 105, cy + 17, { align: "center" });
   doc.setFontSize(15).setTextColor(...color);
-  doc.text(`Riesgo ${evaluacion.nivel_riesgo.toLowerCase()}`, 105, cy + 26, { align: "center" });
+  doc.text(`Riesgo ${nivelRiesgoStr.toLowerCase()}`, 105, cy + 26, { align: "center" });
   doc.setFont("helvetica", "normal").setFontSize(9).setTextColor(90, 100, 105);
-  doc.text(`Probabilidad estimada de incumplimiento   |   Puntaje de cumplimiento: ${evaluacion.score}/100`, 105, cy + 33, { align: "center" });
+  doc.text(`Probabilidad estimada de incumplimiento   |   Puntaje de cumplimiento: ${score}/100`, 105, cy + 33, { align: "center" });
   doc.text("Bajo: 0-34%     Medio: 35-64%     Alto: 65-100%", 105, cy + 39, { align: "center" });
 
   // Checklist
-  const recs = evaluacion.recomendaciones;
+  const recs = evaluacion?.recomendaciones || [];
   const hechas = recs.filter((r) => r.completada).length;
   doc.setTextColor(20, 35, 43).setFont("helvetica", "bold").setFontSize(13);
   doc.text("Plan de acción recomendado", 20, 165);
@@ -73,9 +82,9 @@ export async function generarConstanciaPdf({ usuario, evaluacion }) {
   let mostradas = 0;
   for (const rec of recs) {
     doc.setFont("helvetica", "bold").setFontSize(11);
-    const titulo = doc.splitTextToSize(rec.titulo, 160);
+    const titulo = doc.splitTextToSize(rec.titulo || "", 160);
     doc.setFont("helvetica", "normal").setFontSize(9);
-    const detalle = doc.splitTextToSize(rec.detalle, 160);
+    const detalle = doc.splitTextToSize(rec.detalle || "", 160);
     const alto = titulo.length * 5 + detalle.length * 4 + 5;
     if (y + alto > yMax) break; // se mantiene en una página
 
@@ -93,8 +102,12 @@ export async function generarConstanciaPdf({ usuario, evaluacion }) {
     y += detalle.length * 4 + 5;
     mostradas++;
   }
+
+  // Texto de tareas restantes corregido sintácticamente
   if (mostradas < recs.length) {
-    doc.setFontSize(9).text(`y ${recs.length - mostradas} tareas más en tu panel.`, 28, y);
+    const restantes = recs.length - mostradas;
+    doc.setFontSize(9).setTextColor(90, 100, 105);
+    doc.text(`y ${restantes} tarea(s) más en tu panel.`, 28, y);
   }
 
   // Pie
@@ -105,5 +118,6 @@ export async function generarConstanciaPdf({ usuario, evaluacion }) {
     105, 286, { align: "center" }
   );
 
-  doc.save(`constancia-riesgo-fiscal-${evaluacion.id}.pdf`);
+  const nombreArchivo = evaluacion?.id ? `constancia-riesgo-fiscal-${evaluacion.id}.pdf` : "constancia-riesgo-fiscal-invitado.pdf";
+  doc.save(nombreArchivo);
 }

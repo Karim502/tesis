@@ -16,7 +16,7 @@ from app.db.session import get_db
 from app.models.evaluacion import Evaluacion
 from app.models.user import Rol, Usuario
 from app.schemas.evaluacion import EvaluacionCreate, EvaluacionInvitadoOut, EvaluacionOut, TareaUpdate
-from app.services.cuestionario import PREGUNTAS, RespuestasInvalidas, validar_respuestas
+from app.services.cuestionario import PREGUNTAS, SECTOR_KEY, RespuestasInvalidas, validar_respuestas
 from app.services.modelo_riesgo import predecir_riesgo
 from app.services.recomendaciones import generar_recomendaciones
 
@@ -25,45 +25,42 @@ router = APIRouter(prefix="/v1/evaluacion", tags=["evaluacion"])
 # Guard RBAC reutilizado de CU04: un Auditor o Administrador recibe 403.
 solo_mype = require_roles(Rol.DUENO_MYPE)
 
-
 from collections import namedtuple
 
 def _procesar(data: EvaluacionCreate) -> dict:
     """
     Pipeline ÚNICO para usuarios e invitados: valida -> predice -> genera recomendaciones.
     """
-    # 1. Validar las respuestas
     try:
-        validar_respuestas(data.respuestas)
+        respuestas_crudas = data.respuestas if hasattr(data, "respuestas") else data.model_dump()
+        respuestas = validar_respuestas(respuestas_crudas or {})
     except RespuestasInvalidas as exc:
-        mensaje_error = getattr(exc, "errores", str(exc))
         raise HTTPException(
             422,
-            detail={"code": "INVALID_ANSWERS", "message": "Revisa tus respuestas", "errores": mensaje_error},
+            detail={"code": "INVALID_ANSWERS", "message": "Revisa tus respuestas", "errores": getattr(exc, "errores", str(exc))},
         )
-    
-    respuestas = data.respuestas
-    
-    # 2. Llamar al modelo predictivo (LightGBM)
+
+    # 1. Llamar al modelo predictivo
     pred_dict = predecir_riesgo(respuestas)
-    
-    # 3. Adaptar el diccionario para el generador de recomendaciones original
+
+    # 2. Adaptar el diccionario para el generador de recomendaciones
+    from collections import namedtuple
     PredObj = namedtuple("PredObj", ["nivel", "probabilidad", "score"])
     pred_obj = PredObj(
-        nivel=pred_dict["nivel_riesgo"], 
-        probabilidad=pred_dict["probabilidad"], 
-        score=pred_dict["score"]
+        nivel=pred_dict["nivel_riesgo"],
+        probabilidad=pred_dict["probabilidad"],
+        score=pred_dict["score"],
     )
-    
-    # 4. Retornar el resultado completo reactivando el Plan de Acción
+
+    # 3. Guardar respuestas CRUDAS en BD para que SHAP y comparativo sectorial tengan los datos reales
     return {
         "respuestas": respuestas,
+        "sector_economico": pred_dict.get("datos_procesados", {}).get("sector_economico", "Bazar_VentaVar"),
         "nivel_riesgo": pred_dict["nivel_riesgo"],
         "probabilidad": pred_dict["probabilidad"],
         "score": pred_dict["score"],
         "recomendaciones": generar_recomendaciones(respuestas, pred_obj),
     }
-
 
 # --------------------------------------------------------------------------- público
 

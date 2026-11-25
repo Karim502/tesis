@@ -81,3 +81,59 @@ Notas:
 - `GET /cuestionario` ahora es público (el invitado lo necesita; no contiene datos sensibles).
 - En modo invitado no se guardan borradores y "Hacer otro diagnóstico" borra el resultado: el celular puede pasar de mano en mano.
 - Detrás de un proxy/ngrok, configura la IP real (`X-Forwarded-For`) o el límite se aplicará a la IP del proxy.
+
+---
+
+# Auditoría: estados, notas internas y filtros del padrón (rol Auditor)
+
+## Backend
+| Pieza | Archivo |
+|---|---|
+| Campos `estado_auditoria`, `notas_auditor`, `auditado_por`, `auditado_en` | `backend/app/models/evaluacion.py` |
+| Migración (BD existente; correr después de `002_modo_invitado.sql`) | `backend/sql/003_auditoria.sql` (instalaciones nuevas: `evaluaciones.sql` ya la incluye) |
+| `GET /api/evaluaciones` y `PUT /api/evaluaciones/{id}/auditoria` | `backend/app/api/routes/auditoria.py` |
+| Esquemas | `backend/app/schemas/auditoria.py` |
+
+`GET /api/evaluaciones` — query params opcionales: `estado_auditoria` (`PENDIENTE` \| `EN_REVISION` \| `CERRADO`), `fecha_inicio`, `fecha_fin` (`YYYY-MM-DD`, inclusivas, calendario de Lima), `limit` (1–100, def. 20), `offset`. Responde `{items, total, limit, offset}`.
+
+`PUT /api/evaluaciones/{id}/auditoria` — cuerpo `{estado_auditoria, notas_auditor}` (nota máx. 2000 caracteres; vacía => sin nota). Devuelve la evaluación actualizada. Códigos: 200, 401, 403, 404, 422.
+
+- Solo el rol Auditor; Dueño de MYPE y Administrador reciben 403.
+- `auditado_por` sale del token, nunca del cuerpo. Estado y notas **no** aparecen en las respuestas del Dueño de MYPE ni del invitado.
+- El padrón y el `PUT` **excluyen las evaluaciones de invitados** (son anónimas).
+- Estados con códigos estables; etiquetas ("En revisión") en el frontend (`utils/auditoria.js`).
+
+## Frontend (`src/`)
+```
+pages/DashboardAuditor.jsx            hooks/usePadron.js        api/auditoriaApi.js
+features/auditoria/FiltrosPadron.jsx  PadronLista.jsx  AuditoriaDrawer.jsx  DatosEvaluacion.jsx  EstadoBadge.jsx
+```
+El panel lateral tiene un espacio (`children`) para montar el gráfico SHAP existente: ver el comentario en `DashboardAuditor.jsx`.
+
+---
+
+# Panel del Auditor: filtros avanzados, comparativo sectorial y SHAP
+
+## Migraciones (en orden)
+`backend/sql/003_auditoria.sql` → `backend/sql/004_sector_y_filtros.sql` (columna `sector_economico`, relleno desde `respuestas`, índices por sector y probabilidad).
+
+## Modelo SHAP
+1. Copia tu modelo a `backend/models/modelo_ganador.joblib` (o define `MODELO_PATH`). No se incluye ningún modelo de ejemplo.
+2. `MODELO_CLASE_RIESGO` indica qué clase explica SHAP (por defecto `"1"`).
+3. Instala `shap`, `lightgbm`, `scikit-learn`, `pandas`, `joblib` **con las mismas versiones del entrenamiento** (`requirements.txt`). joblib usa pickle: carga solo archivos de confianza.
+4. **Punto de integración:** `backend/app/services/features.py::construir_features` debe reproducir tu preprocesamiento. Es lo único que probablemente tengas que adaptar.
+Si el modelo falta o falla, el endpoint responde 503/422/500 con mensajes controlados y el resto del panel sigue funcionando.
+
+## Endpoints (rol AUDITOR; las evaluaciones de invitados responden 404)
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/api/evaluaciones` | `estado_auditoria`, `sector_economico`, `probabilidad_min/max` (0–100 %), `fecha_inicio/fin`, `limit` (1–100), `offset` → `{items,total,limit,offset}` |
+| PATCH | `/api/evaluaciones/{id}/auditoria` | Parcial: `estado_auditoria` y/o `notas_auditor` (≥1 campo). El `PUT` anterior se mantiene |
+| GET | `/api/evaluaciones/{id}/comparativo-sectorial` | Probabilidad de la MYPE vs promedio de su sector y general (fracciones 0–1) |
+| GET | `/api/evaluaciones/{id}/shap?max_display=12` | JSON: variable, etiqueta, valor, contribución SHAP, valor base y predicción |
+
+## Frontend (`src/features/auditoria/`)
+`PadronAuditor` (contenedor) · `FiltrosAvanzados` · `Paginacion` · `PadronLista` · `AuditoriaDrawer` (datos, `ComparativoSectorial`, `ShapWaterfallChart`, select de estado, textarea de notas) · hooks `usePadron`, `useCarga`.
+
+**Colores SHAP:** verde = contribución positiva al riesgo, rojo = negativa (según el pedido; es lo contrario de la convención habitual). Se invierten intercambiando `SHAP_COLOR_POSITIVO/NEGATIVO` en `src/utils/auditoria.js`.
+**Estado:** el código `EN_REVISION` se muestra como "En investigación".

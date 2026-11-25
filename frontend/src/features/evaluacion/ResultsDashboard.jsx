@@ -56,15 +56,28 @@ export default function ResultsDashboard({ evaluaciones, usuario, onEvaluacionAc
         </Tarjeta>
       )}
 
-      {invitado ? (
-        <div className="grid gap-3 md:col-span-2 md:grid-cols-2 md:items-center">
-          {/* Sin botón de PDF: solo un aviso discreto con la vía para obtenerlo. */}
-          <p className="text-sm text-slate-600">
-            <Link to="/login" className="font-bold text-accent underline">
-              Regístrate
-            </Link>{" "}
-            para descargar tu reporte en PDF
-          </p>
+      {/* El invitado tiene una sola evaluación: el gráfico de evolución no aplica. */}
+      {!invitado && (
+        <Tarjeta titulo="Cómo ha cambiado tu riesgo" className="md:col-span-2">
+          <RiskHistoryChart evaluaciones={evaluaciones} />
+        </Tarjeta>
+      )}
+
+      {/* Botones de acción unificados (Sin la validación global de invitado) */}
+      <div className="grid gap-3 md:col-span-2 md:grid-cols-2">
+        <button
+          type="button"
+          onClick={descargarPdf}
+          disabled={pdf.cargando}
+          className="flex min-h-[52px] items-center justify-center gap-2 rounded-lg bg-accent px-4 font-bold text-white hover:bg-[#174B48] disabled:cursor-progress disabled:opacity-70"
+        >
+          {pdf.cargando && (
+            <span aria-hidden="true" className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" />
+          )}
+          {pdf.cargando ? "Generando PDF…" : "Descargar constancia PDF"}
+        </button>
+
+        {invitado ? (
           <button
             type="button"
             onClick={onNuevaEvaluacion}
@@ -72,33 +85,21 @@ export default function ResultsDashboard({ evaluaciones, usuario, onEvaluacionAc
           >
             Hacer otro diagnóstico
           </button>
-        </div>
-      ) : (
-        <div className="grid gap-3 md:col-span-2 md:grid-cols-2">
-          <button
-            type="button"
-            onClick={descargarPdf}
-            disabled={pdf.cargando}
-            className="flex min-h-[52px] items-center justify-center gap-2 rounded-lg bg-accent px-4 font-bold text-white hover:bg-[#174B48] disabled:cursor-progress disabled:opacity-70"
-          >
-            {pdf.cargando && (
-              <span aria-hidden="true" className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none" />
-            )}
-            {pdf.cargando ? "Generando PDF…" : "Descargar constancia PDF"}
-          </button>
+        ) : (
           <Link
             to="/dashboard-mype/evaluacion"
             className="flex min-h-[52px] items-center justify-center rounded-lg border-2 border-accent px-4 font-bold text-accent"
           >
             Hacer una nueva evaluación
           </Link>
-          {pdf.error && (
-            <p role="alert" className="text-sm font-bold text-riesgo-alto md:col-span-2">
-              {pdf.error}
-            </p>
-          )}
-        </div>
-      )}
+        )}
+
+        {pdf.error && (
+          <p role="alert" className="text-sm font-bold text-riesgo-alto md:col-span-2">
+            {pdf.error}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

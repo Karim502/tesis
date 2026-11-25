@@ -10,13 +10,14 @@ from app.db.session import get_db
 from app.models.user import Usuario
 from app.schemas.auth import LoginRequest, UserOut
 from app.services.auth_service import InactiveUser, InvalidCredentials, authenticate
+from app.services.bitacora import registrar
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 _COOKIE_OPTS = dict(
-    httponly=True,                   # inaccesible desde JS (anti-XSS)
-    secure=settings.COOKIE_SECURE,   # solo por HTTPS en producción
-    samesite="lax",                  # no se envía en POST cross-site (anti-CSRF)
+    httponly=True,                       # inaccesible desde JS (anti-XSS)
+    secure=settings.COOKIE_SECURE,       # solo por HTTPS en producción
+    samesite=settings.COOKIE_SAMESITE,   # "lax" en local, "none" en prod cross-site
     path="/",
 )
 
@@ -42,14 +43,27 @@ def login(request: Request, response: Response, data: LoginRequest, db: Session 
         settings.COOKIE_NAME, token, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, **_COOKIE_OPTS
     )
     response.headers["Cache-Control"] = "no-store"  # ningún proxy/navegador cachea la respuesta
+    registrar(
+        db,
+        user,
+        "LOGIN",
+        recurso_tipo="usuario",
+        recurso_id=user.id,
+        request=request,
+    )
     # El token NO se devuelve en el cuerpo JSON: solo viaja en la cookie HttpOnly.
     return user
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response):
-    response.delete_cookie(settings.COOKIE_NAME, path="/")
-
+    response.delete_cookie(
+        settings.COOKIE_NAME,
+        path="/",
+        httponly=True,
+        secure=settings.COOKIE_SECURE,
+        samesite=settings.COOKIE_SAMESITE,
+    )
 
 @router.get("/me", response_model=UserOut)
 def me(user: Usuario = Depends(get_current_user)):

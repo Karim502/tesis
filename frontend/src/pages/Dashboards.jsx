@@ -34,5 +34,4 @@ function DashboardShell({ title, endpoint }) {
   );
 }
 
-export const DashboardAuditor = () => <DashboardShell title="Panel del auditor" endpoint="/auditor/panel" />;
 export const AdminPanel = () => <DashboardShell title="Panel de administración" endpoint="/admin/panel" />;

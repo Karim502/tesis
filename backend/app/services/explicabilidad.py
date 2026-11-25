@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
-from app.services.cuestionario import PREGUNTAS
+from app.services.cuestionario import PREGUNTAS, etiqueta_sector
 
 log = logging.getLogger(__name__)
 
@@ -200,7 +200,48 @@ def _variable_original(nombre: str, columnas: tuple[str, ...]) -> str:
     return max(candidatas, key=len) if candidatas else nombre
 
 
+_ETIQUETAS_FEATURE = {
+    "tipo_contribuyente": "Personería jurídica",
+    "sector_economico": "Subsector comercial",
+    "antiguedad_anos": "Antigüedad del negocio",
+    "numero_empleados_formales": "Trabajadores formales",
+    "ingresos_declarados": "Ingresos brutos anuales",
+    "gastos_deducibles": "Costos y gastos declarados",
+    "ratio_gastos_ingresos": "Ratio gastos / ingresos",
+    "margen_utilidad_declarado": "Margen de utilidad declarado",
+    "porcentaje_efectivo": "Ventas en efectivo",
+    "facturas_anuladas": "Comprobantes anulados",
+    "porcentaje_notas_credito": "Notas de crédito",
+    "compras_proveedores_nuevos_pct": "Compras a proveedores nuevos",
+    "concentracion_cliente_principal": "Concentración en cliente principal",
+    "historial_auditoria": "Historial de auditoría",
+    "retraso_declaracion_dias": "Días de retraso en declaraciones",
+    "declaraciones_rectificatorias": "Declaraciones rectificatorias",
+}
+
+_FEATURE_A_PREGUNTA = {
+    "tipo_contribuyente": "var_1_personeria_juridica",
+    "sector_economico": "var_2_subsector_comercial",
+    "antiguedad_anos": "var_3_antiguedad",
+    "numero_empleados_formales": "var_4_trabajadores",
+    "ingresos_declarados": "var_5_ingresos_brutos",
+    "gastos_deducibles": "var_6_costos_gastos",
+    "porcentaje_efectivo": "var_7_porcentaje_efectivo",
+    "facturas_anuladas": "var_8_comprobantes_anulados",
+    "porcentaje_notas_credito": "var_9_notas_credito",
+    "compras_proveedores_nuevos_pct": "var_10_proveedores_nuevos",
+    "concentracion_cliente_principal": "var_11_cliente_principal",
+    "historial_auditoria": "var_12_resultado_auditoria",
+    "retraso_declaracion_dias": "var_13_dias_mora",
+    "declaraciones_rectificatorias": "var_14_rectificatorias",
+}
+
+_DERIVADAS_INGRESOS = {"ratio_gastos_ingresos", "margen_utilidad_declarado"}
+
+
 def _etiqueta(variable: str) -> str:
+    if variable in _ETIQUETAS_FEATURE:
+        return _ETIQUETAS_FEATURE[variable]
     p = _PREGUNTAS.get(variable)
     if p:
         return p.get("corta") or p["texto"]
@@ -208,17 +249,27 @@ def _etiqueta(variable: str) -> str:
 
 
 def _valor_legible(variable: str, respuestas: dict, X) -> Any:
-    v = respuestas.get(variable)
-    p = _PREGUNTAS.get(variable)
-    if v is not None and p is not None and p["tipo"] == "opcion":
-        return next((o["etiqueta"] for o in p["opciones"] if o["valor"] == v), str(v))
-    if v is not None:
-        return v if isinstance(v, (int, float, str)) and not isinstance(v, bool) else str(v)
-    if variable in X.columns:  # variable derivada que no es una respuesta directa
-        x = X.iloc[0][variable]
-        return _finito(x) if not isinstance(x, str) else x
-    return None
+    pregunta_id = _FEATURE_A_PREGUNTA.get(variable)
+    if pregunta_id and respuestas.get(pregunta_id) is not None:
+        return str(respuestas[pregunta_id])
 
+    if variable in respuestas and respuestas[variable] is not None:
+        v = respuestas[variable]
+        if variable == "sector_economico":
+            return etiqueta_sector(str(v))
+        return v if isinstance(v, (int, float, str)) and not isinstance(v, bool) else str(v)
+
+    if variable in X.columns:
+        if variable in _DERIVADAS_INGRESOS and "ratio_gastos_ingresos" in X.columns:
+            ratio = _finito(X.iloc[0]["ratio_gastos_ingresos"])
+            if ratio is not None and ratio < 0:
+                return "No aplica"
+        x = X.iloc[0][variable]
+        if isinstance(x, str):
+            return etiqueta_sector(x) if variable == "sector_economico" else x
+        val = _finito(x)
+        return round(val, 4) if val is not None else None
+    return None
 
 def explicar(respuestas: dict, max_display: int = 12) -> dict:
     """Contribuciones SHAP de UNA evaluación, ordenadas por magnitud (como el waterfall de shap)."""

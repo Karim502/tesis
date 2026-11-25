@@ -191,29 +191,49 @@ def obtener_cuestionario():
 
 # --- AGREGAR ESTO AL FINAL DEL ARCHIVO ---
 
-# 1. Renombramos la variable para que el router de Claude la encuentre
 PREGUNTAS = PREGUNTAS_MYPE
 
-# 2. Excepción personalizada que espera el router
-class RespuestasInvalidas(Exception):
-    pass
-
-# 3. Función de validación que verifica que lleguen las 15 respuestas
-def validar_respuestas(respuestas: dict):
-    claves_esperadas = {p["id"] for p in PREGUNTAS}
-    claves_recibidas = set(respuestas.keys())
-    
-    faltantes = claves_esperadas - claves_recibidas
-    if faltantes:
-        raise RespuestasInvalidas(f"Faltan las siguientes respuestas: {faltantes}")
-
-# Definimos el nombre exacto de la pregunta que contiene el sector
 SECTOR_KEY = "var_2_subsector_comercial"
 
-# Definimos la función que Claude usó para formatear las etiquetas en los gráficos
-def etiqueta_sector(valor):
+ETIQUETAS_SECTOR = {
+    "Abarrotes_Alimentos": "Alimentos, bebidas y abarrotes",
+    "Textil_Calzado": "Textiles, prendas de vestir y calzado",
+    "Ferreteria_Hogar": "Ferretería, hogar y materiales",
+    "Tecnologia_Repuestos": "Equipos, tecnología y repuestos",
+    "Bazar_VentaVar": "Bazar, regalos, librerías y otros",
+}
+
+
+class RespuestasInvalidas(Exception):
+    def __init__(self, errores: dict[str, str]):
+        super().__init__("Respuestas inválidas")
+        self.errores = errores
+
+
+def validar_respuestas(respuestas: dict) -> dict[str, str]:
+    if not isinstance(respuestas, dict):
+        raise RespuestasInvalidas({"_general": "El formato de respuestas debe ser un objeto JSON."})
+
+    esperadas = {p["id"]: p for p in PREGUNTAS}
+    errores: dict[str, str] = {}
+
+    for clave in respuestas.keys() - esperadas.keys():
+        errores[clave] = "pregunta desconocida"
+
+    for clave, pregunta in esperadas.items():
+        valor = respuestas.get(clave)
+        if valor is None or valor == "":
+            errores[clave] = "obligatoria"
+        elif not isinstance(valor, str) or valor not in pregunta["opciones"]:
+            errores[clave] = "opción no válida"
+
+    if errores:
+        raise RespuestasInvalidas(errores)
+
+    return {clave: respuestas[clave] for clave in esperadas}
+
+
+def etiqueta_sector(valor: str | None) -> str:
     if not valor:
         return "Desconocido"
-    # Como los valores son textos largos (ej. "Comercio de alimentos..."), 
-    # podrías dejarlo tal cual o recortarlo. Lo dejaremos tal cual.
-    return str(valor)
+    return ETIQUETAS_SECTOR.get(str(valor), str(valor))

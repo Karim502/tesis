@@ -70,14 +70,14 @@ def _salida(ev: Evaluacion, mype: Usuario | None, auditor: Usuario | None) -> Ev
     )
 
 def _salida_actual(db: Session, ev: Evaluacion) -> EvaluacionAuditorOut:
+    mype = db.get(Usuario, ev.user_id) if ev.user_id else None
     revisor = db.get(Usuario, ev.auditado_por) if ev.auditado_por else None
-    return _salida(ev, db.get(Usuario, ev.user_id), revisor)
-
+    return _salida(ev, mype, revisor)
 
 @router.get("", response_model=PadronOut)
 def listar_padron(
     estado_auditoria: EstadoAuditoria | None = Query(None, description="PENDIENTE | EN_REVISION | CERRADO"),
-    sector_economico: str | None = Query(None, min_length=1, max_length=40, pattern=r"^[a-z0-9_]+$"),
+    sector_economico: str | None = Query(None, min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_]+$"),    
     probabilidad_min: float | None = Query(None, ge=0, le=100, description="Riesgo mínimo en %, inclusive (ej. 80)"),
     probabilidad_max: float | None = Query(None, ge=0, le=100, description="Riesgo máximo en %, inclusive"),
     fecha_inicio: date | None = Query(None, ge=FECHA_MIN, le=FECHA_MAX, description="Inclusive (YYYY-MM-DD, hora de Perú)"),
@@ -176,15 +176,35 @@ def parchear_auditoria(
 def actualizar_auditoria(
     evaluacion_id: int,
     data: AuditoriaUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     auditor: Usuario = Depends(solo_auditor),
 ):
     """Reemplazo COMPLETO de estado y nota (semántica PUT). El panel usa PATCH; este se mantiene por compatibilidad."""
     ev = evaluacion_auditable(db, evaluacion_id)
+    estado_antes = ev.estado_auditoria
+    notas_modificadas = data.notas_auditor != ev.notas_auditor
+
     ev.estado_auditoria = data.estado_auditoria.value
     ev.notas_auditor = data.notas_auditor
     ev.auditado_por = auditor.id
     ev.auditado_en = datetime.now(timezone.utc)
     db.commit()
     db.refresh(ev)
-    return _salida(ev, db.get(Usuario, ev.user_id), auditor)
+
+    detalle = {}
+    if ev.estado_auditoria != estado_antes:
+        detalle["estado"] = {"antes": estado_antes, "despues": ev.estado_auditoria}
+    if notas_modificadas:
+        detalle["notas_modificadas"] = True
+    registrar(
+        db,
+        auditor,
+        "AUDITORIA_ACTUALIZADA",
+        recurso_tipo="evaluacion",
+        recurso_id=ev.id,
+        detalle=detalle,
+        request=request,
+    )
+    mype = db.get(Usuario, ev.user_id) if ev.user_id else None
+    return _salida(ev, mype, auditor)

@@ -1,15 +1,15 @@
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from typing import Annotated
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from pydantic import BaseModel, ConfigDict, Field
+ValorRespuesta = Annotated[str, Field(max_length=200)]
 
 
 class EvaluacionCreate(BaseModel):
-    # Tope de claves: el endpoint de invitado es público y no debe aceptar cuerpos gigantes.
-    # El contenido se valida después contra el catálogo (services/cuestionario.py).
-    respuestas: Annotated[dict[str, str | int | float], Field(max_length=64)]
+    # Tope de claves y longitud por valor: protege el endpoint público de invitado.
+    # El contenido exacto contra el catálogo se valida en services/cuestionario.py.
+    respuestas: Annotated[dict[str, ValorRespuesta], Field(max_length=64)]
 
 
 class RecomendacionOut(BaseModel):
@@ -28,8 +28,13 @@ class EvaluacionOut(BaseModel):
     nivel_riesgo: Literal["Bajo", "Medio", "Alto"]
     probabilidad: float
     score: int
-    respuestas: dict
+    respuestas: dict[str, str]
     recomendaciones: list[RecomendacionOut]
+
+    @field_validator("respuestas", mode="before")
+    @classmethod
+    def _normalizar_respuestas_nulas(cls, v):
+        return {} if v is None else v
 
 
 class TareaUpdate(BaseModel):

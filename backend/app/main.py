@@ -1,37 +1,69 @@
+import logging
 import threading
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.api.routes import admin, analisis, auditoria, auth, evaluacion, panels
 from app.core.config import settings
+from app.core.csrf import verificar_origen
 from app.core.rate_limit import limiter
 from app.services.explicabilidad import precalentar
-from app.core.csrf import verificar_origen
+
+logger = logging.getLogger(__name__)
+
+
+def _precalentar_seguro() -> None:
+    try:
+        precalentar()
+    except Exception:
+        logger.exception("Fallo al precalentar el explicador SHAP en el arranque")
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    threading.Thread(target=precalentar, daemon=True, name="precalentar-shap").start()
+    threading.Thread(
+        target=_precalentar_seguro,
+        daemon=True,
+        name="precalentar-shap",
+    ).start()
     yield
 
+
+es_prod = settings.ENV == "prod"
 
 app = FastAPI(
     title="Tesis MYPE - API",
     lifespan=lifespan,
     dependencies=[Depends(verificar_origen)],
+    docs_url=None if es_prod else "/docs",
+    redoc_url=None if es_prod else "/redoc",
+    openapi_url=None if es_prod else "/openapi.json",
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+@app.middleware("http")
+async def agregar_headers_seguridad(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if es_prod:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
 )
 
 app.include_router(auth.router, prefix="/api")
@@ -40,6 +72,7 @@ app.include_router(evaluacion.router, prefix="/api")
 app.include_router(auditoria.router, prefix="/api")
 app.include_router(analisis.router, prefix="/api")
 app.include_router(panels.router, prefix="/api")
+
 
 @app.get("/api/health")
 def health():

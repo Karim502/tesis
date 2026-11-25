@@ -50,9 +50,30 @@ class Settings(BaseSettings):
     @field_validator("JWT_SECRET_KEY")
     @classmethod
     def secret_must_be_strong(cls, v: str) -> str:
-        if len(v) < 32:
-            raise ValueError("JWT_SECRET_KEY debe tener al menos 32 caracteres")
-        return v
+        limpio = v.strip()
+        if len(limpio) < 32 or len(set(limpio)) < 8:
+            raise ValueError("JWT_SECRET_KEY debe tener al menos 32 caracteres con suficiente entropía")
+        return limpio
+
+    @field_validator("CORS_ORIGINS")
+    @classmethod
+    def normalizar_cors_origins(cls, v: list[str]) -> list[str]:
+        limpios = [o.strip().rstrip("/") for o in v if o and o.strip()]
+        if not limpios:
+            raise ValueError("CORS_ORIGINS debe incluir al menos un origen válido")
+        return limpios
+
+    @field_validator("S3_ENDPOINT_URL", "S3_BUCKET_NAME", "S3_REGION")
+    @classmethod
+    def limpiar_s3_strings(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        limpio = v.strip()
+        if not limpio:
+            return None
+        if any(c.isspace() for c in limpio):
+            raise ValueError("Variable S3 inválida: contiene espacios o comentarios en la misma línea")
+        return limpio
 
     @model_validator(mode="after")
     def validar_configuracion(self):
@@ -63,8 +84,14 @@ class Settings(BaseSettings):
             raise ValueError("Define AWS_ACCESS_KEY_ID y AWS_SECRET_ACCESS_KEY juntas (o ninguna, para usar un rol IAM)")
 
         # Validación de seguridad en producción
-        if self.ENV == "prod" and "*" in self.CORS_ORIGINS:
-            raise ValueError("CORS_ORIGINS no puede contener '*' en producción")
+        if self.ENV == "prod":
+            if "*" in self.CORS_ORIGINS:
+                raise ValueError("CORS_ORIGINS no puede contener '*' en producción")
+            if any(not o.startswith("https://") for o in self.CORS_ORIGINS):
+                raise ValueError("Todos los CORS_ORIGINS deben usar https:// en producción")
+            if not self.COOKIE_SECURE:
+                raise ValueError("COOKIE_SECURE debe ser True en producción")
+
         if self.COOKIE_SAMESITE == "none" and not self.COOKIE_SECURE:
             raise ValueError("COOKIE_SAMESITE='none' requiere COOKIE_SECURE=True")
 

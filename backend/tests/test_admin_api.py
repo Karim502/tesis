@@ -8,7 +8,11 @@ from pathlib import Path
 
 S = Path(tempfile.mkdtemp(prefix="admin_test_"))
 os.environ.update(
-    DATABASE_URL=f"sqlite:///{S}/t.db", JWT_SECRET_KEY="x" * 40, COOKIE_SECURE="false",
+    ENV="dev",
+    STORAGE_BACKEND="local",
+    DATABASE_URL=f"sqlite:///{S}/t.db",
+    JWT_SECRET_KEY="test-jwt-secret-key-con-suficiente-entropia-0123456789",
+    COOKIE_SECURE="false",
     MODELS_DIR=str(S / "models"), ENTRENAMIENTO_CSV_PATH=str(S / "dataset.csv"),
     MODELO_PATH=str(S / "no_existe.joblib"), CORS_ORIGINS='["http://localhost:5173"]',
 )

@@ -60,9 +60,14 @@ def ruta_activa() -> Path | None:
             v = db.execute(
                 select(ModelVersion).where(ModelVersion.estado == EstadoModelo.ACTIVO.value)
             ).scalar_one_or_none()
-            ruta = asegurar_local(v.archivo, v.sha256) if v else None
-    except Exception:  # si la BD o S3 fallan, se sigue con MODELO_PATH en vez de tumbar la explicabilidad
-        log.exception("No se pudo consultar o descargar el modelo activo")
+            if v:
+                ruta = ruta_de(v)
+                try:
+                    ruta = asegurar_local(v.archivo, v.sha256)
+                except Exception:
+                    log.exception("No se pudo descargar el modelo activo %s desde S3", v.archivo)
+    except Exception:  # si la BD falla, se sigue con MODELO_PATH en vez de tumbar la explicabilidad
+        log.exception("No se pudo consultar el modelo activo")
     _cache.update(hasta=ahora + _TTL_S, ruta=ruta)
     return ruta
 

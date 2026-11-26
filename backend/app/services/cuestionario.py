@@ -196,11 +196,19 @@ PREGUNTAS = PREGUNTAS_MYPE
 SECTOR_KEY = "var_2_subsector_comercial"
 
 ETIQUETAS_SECTOR = {
+    # Códigos internos del modelo (retrocompatibilidad)
     "Abarrotes_Alimentos": "Alimentos, bebidas y abarrotes",
     "Textil_Calzado": "Textiles, prendas de vestir y calzado",
     "Ferreteria_Hogar": "Ferretería, hogar y materiales",
     "Tecnologia_Repuestos": "Equipos, tecnología y repuestos",
     "Bazar_VentaVar": "Bazar, regalos, librerías y otros",
+    # Textos exactos de var_2_subsector_comercial
+    "Comercio de alimentos, bebidas y abarrotes.": "Alimentos, bebidas y abarrotes",
+    "Comercio de textiles, prendas de vestir y calzado.": "Textiles, prendas de vestir y calzado",
+    "Comercio de artículos de ferretería, hogar y materiales.": "Ferretería, hogar y materiales",
+    "Comercio de equipos, tecnología, celulares y repuestos vehiculares.": "Equipos, tecnología y repuestos",
+    "Comercio no especializado / Bazar, regalos y librerías.": "Bazar, regalos, librerías y otros",
+    "Otro sub-sector comercial": "Otro sub-sector comercial",
 }
 
 
@@ -222,7 +230,7 @@ def validar_respuestas(respuestas: dict) -> dict[str, str]:
 
     for clave, pregunta in esperadas.items():
         valor = respuestas.get(clave)
-        if valor is None or valor == "":
+        if valor is None or (isinstance(valor, str) and not valor.strip()):
             errores[clave] = "obligatoria"
         elif not isinstance(valor, str) or valor not in pregunta["opciones"]:
             errores[clave] = "opción no válida"

@@ -11,9 +11,23 @@ from app.api.routes import admin, analisis, auditoria, auth, evaluacion, panels
 from app.core.config import settings
 from app.core.csrf import verificar_origen
 from app.core.rate_limit import limiter
+from app.db.session import SessionLocal
 from app.services.explicabilidad import precalentar
+from app.services.modelos import marcar_huerfanos
 
 logger = logging.getLogger(__name__)
+
+
+def _limpiar_huerfanos_arranque() -> None:
+    db = SessionLocal()
+    try:
+        marcar_huerfanos(db, todos=True)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Fallo al limpiar entrenamientos huérfanos en el arranque")
+    finally:
+        db.close()
 
 
 def _precalentar_seguro() -> None:
@@ -25,6 +39,7 @@ def _precalentar_seguro() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    _limpiar_huerfanos_arranque()
     threading.Thread(
         target=_precalentar_seguro,
         daemon=True,

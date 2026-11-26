@@ -122,11 +122,10 @@ def _asegurar_diccionario(datos) -> dict:
         return {}
     if isinstance(datos, str):
         try:
-            return json.loads(datos)
+            datos = json.loads(datos)
         except json.JSONDecodeError:
             return {}
-    return datos
-
+    return datos if isinstance(datos, dict) else {}
 
 def construir_features_modelo(respuestas) -> dict:
     """Convierte las 14 respuestas validadas del cuestionario a las 16 variables crudas del pipeline."""
@@ -166,7 +165,6 @@ def construir_features_modelo(respuestas) -> dict:
         "declaraciones_rectificatorias": MAPA_RECTIFICATORIAS.get(r.get("var_14_rectificatorias", ""), -1),
     }
 
-
 def predecir_riesgo(respuestas) -> dict:
     datos_modelo = construir_features_modelo(respuestas)
 
@@ -176,16 +174,44 @@ def predecir_riesgo(respuestas) -> dict:
         log.error("Modelo no disponible para predicción (%s).", exc.motivo)
         raise
 
+    faltantes = [col for col in m.columnas if col not in datos_modelo]
+    if faltantes:
+        log.error(
+            "Incompatibilidad de esquema: el modelo exige columnas ausentes en el cuestionario: %s",
+            faltantes,
+        )
+        raise ModeloNoDisponible("configuracion")
+
+    if m.idx_clase is None:
+        log.error("El modelo cargado no define una clase objetivo válida (idx_clase=None).")
+        raise ModeloNoDisponible("configuracion")
+
     df_entrada = pd.DataFrame([datos_modelo], columns=list(m.columnas))
 
     cols_categoricas = {"tipo_contribuyente", "sector_economico", "historial_auditoria"}
     for col in df_entrada.columns:
         if col not in cols_categoricas:
             df_entrada[col] = pd.to_numeric(df_entrada[col], errors="coerce")
+        elif m.preprocesador is None:
+            df_entrada[col] = df_entrada[col].astype("category")
 
-    X_procesado = m.preprocesador.transform(df_entrada) if m.preprocesador is not None else df_entrada
-    idx = m.idx_clase if m.idx_clase is not None else 1
-    prob_evasion = float(m.estimador.predict_proba(X_procesado)[0, idx])
+    cols_nulas = [col for col in df_entrada.columns if df_entrada[col].isna().any()]
+    if cols_nulas:
+        log.error("Valores inválidos o no numéricos al preparar la entrada del modelo: %s", cols_nulas)
+        raise ModeloNoDisponible("configuracion")
+
+    try:
+        X_procesado = m.preprocesador.transform(df_entrada) if m.preprocesador is not None else df_entrada
+        prob_evasion = float(m.estimador.predict_proba(X_procesado)[0, m.idx_clase])
+    except Exception:
+        log.exception("Error ejecutando la inferencia del modelo.")
+        raise ModeloNoDisponible("carga")
+
+    if not math.isfinite(prob_evasion):
+        log.error("El modelo devolvió una probabilidad no finita (%s).", prob_evasion)
+        raise ModeloNoDisponible("carga")
+
+    prob_evasion = max(0.0, min(1.0, prob_evasion))
 
     if prob_evasion < 0.33:
         nivel_riesgo = "Bajo"

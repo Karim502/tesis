@@ -17,6 +17,7 @@ from app.services.cuestionario import etiqueta_sector
 from app.services.explicabilidad import ModeloNoDisponible, explicar
 from app.services.features import FeaturesFaltantes
 from app.services.modelo_riesgo import MAPA_SECTOR
+from app.core.rate_limit import limiter
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/evaluaciones", tags=["analisis"])
@@ -28,6 +29,16 @@ _MENSAJE_MODELO = {
     "configuracion": "La configuración del modelo de explicabilidad no es válida.",
 }
 
+def _respuestas_dict(raw) -> dict:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
 
 @router.get("/{evaluacion_id}/comparativo-sectorial", response_model=ComparativoSectorialOut)
 def comparativo_sectorial(
@@ -48,7 +59,7 @@ def comparativo_sectorial(
             request=request,
         )
 
-    respuestas = ev.respuestas if isinstance(ev.respuestas, dict) else {}
+    respuestas = _respuestas_dict(ev.respuestas)
     sector_raw = ev.sector_economico or respuestas.get("var_2_subsector_comercial")
     sector_registrado = MAPA_SECTOR.get(sector_raw, sector_raw) if sector_raw else None
 
@@ -61,8 +72,8 @@ def comparativo_sectorial(
         ]
         prom_sector, n_sector = db.execute(
             select(func.avg(Evaluacion.probabilidad), func.count()).where(
-                (Evaluacion.sector_economico == sector_registrado)
-                | (Evaluacion.respuestas["var_2_subsector_comercial"].astext.in_(valores_equivalentes))
+                (Evaluacion.sector_economico.in_(valores_equivalentes))
+                | (Evaluacion.respuestas["var_2_subsector_comercial"].as_string().in_(valores_equivalentes))
             )
         ).one()
 
@@ -84,7 +95,9 @@ def comparativo_sectorial(
 
 
 @router.get("/{evaluacion_id}/shap", response_model=ShapOut)
+@limiter.limit("30/minute")
 def explicabilidad_shap(
+    request: Request,
     evaluacion_id: int,
     max_display: int = Query(12, ge=1, le=50, description="Variables a mostrar; el resto se agrupa en 'otras'"),
     db: Session = Depends(get_db),
@@ -96,13 +109,10 @@ def explicabilidad_shap(
     """
     ev = evaluacion_auditable(db, evaluacion_id)
     try:
-        resp = ev.respuestas
-        if isinstance(resp, str):
-            resp = json.loads(resp)
-
-        datos = explicar(resp or {}, max_display)
+        datos = explicar(_respuestas_dict(ev.respuestas), max_display)
     except ModeloNoDisponible as exc:
-        raise HTTPException(503, detail={"code": "MODEL_NOT_AVAILABLE", "message": _MENSAJE_MODELO[exc.motivo]})
+        mensaje = _MENSAJE_MODELO.get(exc.motivo, "El modelo de explicabilidad no está disponible.")
+        raise HTTPException(503, detail={"code": "MODEL_NOT_AVAILABLE", "message": mensaje})
     except FeaturesFaltantes as exc:
         raise HTTPException(
             422,

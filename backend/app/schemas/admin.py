@@ -38,10 +38,12 @@ class AuditorCreate(BaseModel):
     def _p(cls, v: str) -> str:
         return _validar_password(v)
 
-    @field_validator("email")
+    @field_validator("email", mode="before")
     @classmethod
-    def _email(cls, v: str) -> str:
-        return v.strip().lower()
+    def _email(cls, v):
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
 
 
 class AuditorPatch(BaseModel):

@@ -132,8 +132,11 @@ def marcar_recomendacion(
 ):
     """Guarda el avance del checklist. Filtra por user_id para impedir acceder a evaluaciones ajenas (IDOR)."""
     ev = db.execute(
-        select(Evaluacion).where(Evaluacion.id == evaluacion_id, Evaluacion.user_id == user.id)
+        select(Evaluacion)
+        .where(Evaluacion.id == evaluacion_id, Evaluacion.user_id == user.id)
+        .with_for_update()
     ).scalar_one_or_none()
+    
     recs = (ev.recomendaciones or []) if ev is not None else []
     if ev is None or rec_id not in {r.get("id") for r in recs if isinstance(r, dict)}:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail={"code": "NOT_FOUND", "message": "No encontrado"})

@@ -73,6 +73,13 @@ class Settings(BaseSettings):
             raise ValueError("CORS_ORIGINS debe incluir al menos un origen válido")
         return limpios
 
+    @field_validator("COOKIE_SAMESITE", mode="before")
+    @classmethod
+    def normalizar_cookie_samesite(cls, v):
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
     @field_validator("S3_ENDPOINT_URL", "S3_BUCKET_NAME", "S3_REGION", "AWS_ACCESS_KEY_ID")
     @classmethod
     def limpiar_s3_strings(cls, v: str | None) -> str | None:

@@ -8,31 +8,32 @@ from app.core.security import decode_access_token
 from app.db.session import get_db
 from app.models.user import Rol, Usuario
 
-_UNAUTHORIZED = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED,
-    detail={"code": "NOT_AUTHENTICATED", "message": "Sesión no válida o expirada"},
-)
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"code": "NOT_AUTHENTICATED", "message": "Sesión no válida o expirada"},
+    )
 
 
 def get_current_user(request: Request, db: Session = Depends(get_db)) -> Usuario:
-    # El token viaja en una cookie HttpOnly: el JavaScript del navegador no puede leerla,
-    # así que un ataque XSS no puede robarlo (a diferencia de localStorage).
     token = request.cookies.get(settings.COOKIE_NAME)
     if not token:
-        raise _UNAUTHORIZED
+        raise _unauthorized()
     try:
         payload = decode_access_token(token)
         user_id = int(payload["sub"])
-    except (jwt.PyJWTError, ValueError):
-        raise _UNAUTHORIZED
+    except (jwt.PyJWTError, ValueError, TypeError):
+        raise _unauthorized()
 
-    # Se consulta la BD en cada petición: si el admin desactiva al usuario o cambia su rol,
-    # el efecto es inmediato y no depende de lo que diga un token antiguo.
+    # Se consulta la BD en cada petición: si el admin desactiva o elimina al usuario,
+    # el bloqueo es inmediato. Para logout o reset de contraseña se acepta el TTL corto
+    # del JWT (ACCESS_TOKEN_EXPIRE_MINUTES=30) como mitigación; la revocación granular
+    # mediante jti o token_version queda prevista como mejora futura.
     user = db.get(Usuario, user_id)
+    
     if user is None or not user.activo:
-        raise _UNAUTHORIZED
+        raise _unauthorized()
     return user
-
 
 def require_roles(*roles: Rol):
     """Fábrica de guards RBAC. Esta es la barrera REAL; los guards de React solo mejoran la UX."""

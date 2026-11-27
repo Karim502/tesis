@@ -142,6 +142,13 @@ def parchear_auditoria(
     cambio = False
     notas_modificadas = False
 
+    if "estado_auditoria" in data.model_fields_set:
+        if data.estado_auditoria is None:
+            raise _error_rango("INVALID_STATE", "El estado de auditoría no puede ser nulo")
+        if data.estado_auditoria.value != ev.estado_auditoria:
+            ev.estado_auditoria = data.estado_auditoria.value
+            cambio = True
+    
     if "estado_auditoria" in data.model_fields_set and data.estado_auditoria.value != ev.estado_auditoria:
         ev.estado_auditoria = data.estado_auditoria.value
         cambio = True

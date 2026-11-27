@@ -233,6 +233,7 @@ def forzar_reentrenamiento(
 
 @router.get("/modelos/{modelo_id}", response_model=ModelVersionOut)
 def ver_modelo(modelo_id: int, db: Session = Depends(get_db)):
+    modelos.marcar_huerfanos(db)
     v = db.get(ModelVersion, modelo_id)
     if v is None:
         raise _error(404, "NOT_FOUND", "Versión no encontrada")

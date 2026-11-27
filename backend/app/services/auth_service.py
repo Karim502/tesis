@@ -17,10 +17,8 @@ class InactiveUser(Exception):
 
 
 def authenticate(db: Session, email: str, password: str) -> Usuario:
-    # PREVENCIÓN DE INYECCIÓN SQL: se usa el constructor de consultas de SQLAlchemy.
-    # `email` viaja como PARÁMETRO ENLAZADO (bind parameter), separado del texto SQL, por lo que
-    # PostgreSQL nunca lo interpreta como código. Jamás se concatenan ni formatean strings en SQL.
-    user = db.execute(select(Usuario).where(Usuario.email == email)).scalar_one_or_none()
+    email_norm = email.strip().lower()
+    user = db.execute(select(Usuario).where(Usuario.email == email_norm)).scalar_one_or_none()
 
     # Se verifica la contraseña SIEMPRE (con hash falso si no hay usuario) para igualar tiempos.
     password_ok = verify_password(password, user.password_hash if user else None)

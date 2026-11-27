@@ -6,8 +6,15 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import settings
 
+
+def _normalizar_db_url(url: str) -> str:
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg2://", 1)
+    return url
+
+
 engine = create_engine(
-    settings.DATABASE_URL,
+    _normalizar_db_url(settings.DATABASE_URL),
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=5,

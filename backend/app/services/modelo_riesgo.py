@@ -1,6 +1,7 @@
 import json
 import logging
 import pandas as pd
+import math
 
 from app.services.explicabilidad import ModeloNoDisponible, cargar_modelo
 

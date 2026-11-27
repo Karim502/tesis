@@ -20,6 +20,13 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
+  // Si cualquier petición autenticada devuelve 401, limpia el usuario para redirigir a /login.
+  useEffect(() => {
+    const onExpired = () => setUser(null);
+    window.addEventListener("auth:expired", onExpired);
+    return () => window.removeEventListener("auth:expired", onExpired);
+  }, []);
+
   const login = useCallback(async (email, password) => {
     const u = await authApi.login(email, password); // lanza ApiError si falla
     setUser(u);

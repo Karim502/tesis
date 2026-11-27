@@ -25,17 +25,19 @@ class FeaturesFaltantes(Exception):
 def construir_features(respuestas: dict, columnas: list[str], como_categoria: bool = True):
     import pandas as pd
 
-    if not respuestas:
+    if not respuestas or not isinstance(respuestas, dict):
         raise FeaturesFaltantes(columnas)
 
-    # Retrocompatibilidad: si el registro en BD ya tiene las 16 variables procesadas (evaluaciones antiguas)
+    # Retrocompatibilidad: si el registro en BD ya tiene las variables del modelo
     if all(c in respuestas for c in columnas):
         respuestas_modelo = dict(respuestas)
+    elif any(isinstance(k, str) and k.startswith("var_") for k in respuestas):
+        # Transformación pura sin ejecutar inferencia ni cargar el modelo
+        from app.services.modelo_riesgo import construir_features_modelo
+        respuestas_modelo = construir_features_modelo(respuestas)
     else:
-        # Usamos la misma transformación exacta de modelo_riesgo.py para garantizar 100% de coherencia
-        from app.services.modelo_riesgo import predecir_riesgo
-        pred = predecir_riesgo(respuestas)
-        respuestas_modelo = pred["datos_procesados"]
+        # Formato de columnas del modelo pero incompleto: reportar exactamente qué falta
+        respuestas_modelo = dict(respuestas)
 
     faltantes = [c for c in columnas if respuestas_modelo.get(c) is None]
     if faltantes:

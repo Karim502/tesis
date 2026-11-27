@@ -86,7 +86,7 @@ def cargar_lote(origen: Path | bytes):
             X[c] = pd.to_numeric(X[c], errors="coerce").fillna(-1)
     for c in CAT_COLS:
         if c in X.columns:
-            X[c] = X[c].astype(str)
+            X[c] = X[c].fillna("Desconocido").astype(str).str.strip()
     return X, y
 
 
@@ -107,6 +107,9 @@ def ejecutar_entrenamiento(version_id: int, ruta_csv: str, activar_si_mejora: bo
     """Tarea de fondo. Abre su PROPIA sesión de BD y no deja nunca la fila en ENTRENANDO."""
     with SessionLocal() as db:
         v = db.get(ModelVersion, version_id)
+        if v is None:
+            return
+        destino: Path | None = None
         try:
             _etapa(db, v, "validando datos")
             X, y = cargar_lote(Path(ruta_csv))
@@ -124,8 +127,7 @@ def ejecutar_entrenamiento(version_id: int, ruta_csv: str, activar_si_mejora: bo
             preprocessor = ColumnTransformer(
                 transformers=[
                     ("num", StandardScaler(), [c for c in NUM_COLS if c in X.columns]),
-                    ("cat", OneHotEncoder(drop="first", sparse_output=False, handle_unknown="ignore"), [c for c in CAT_COLS if c in X.columns]),
-                ]
+                    ("cat", OneHotEncoder(sparse_output=False, handle_unknown="ignore"), [c for c in CAT_COLS if c in X.columns]),                ]
             )
             modelo = Pipeline([
                 ("prep", preprocessor),
@@ -163,6 +165,8 @@ def ejecutar_entrenamiento(version_id: int, ruta_csv: str, activar_si_mejora: bo
         except DatosInvalidos as exc:
             _fallar(db, v, str(exc))
         except Exception:
+            if destino is not None and destino.is_file():
+                destino.unlink(missing_ok=True)
             log.exception("Falló el entrenamiento de la versión %s", v.version if v else version_id)
             _fallar(db, v, "Error interno durante el entrenamiento; revisa los logs del servidor.")
 

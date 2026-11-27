@@ -8,10 +8,12 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
-    @field_validator("email")
+    @field_validator("email", mode="before")
     @classmethod
-    def normalize_email(cls, v: str) -> str:
-        return v.strip().lower()
+    def normalize_email(cls, v):
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
 
     @field_validator("password")
     @classmethod

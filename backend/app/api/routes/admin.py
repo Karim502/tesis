@@ -116,13 +116,13 @@ def actualizar_auditor(
     """Edita nombre, restablece contraseña o SUSPENDE/REACTIVA (`activo`). La suspensión corta la sesión en la siguiente petición."""
     u = _auditor_o_404(db, auditor_id)
     campos = []
-    if "nombre" in data.model_fields_set and data.nombre != u.nombre:
+    if "nombre" in data.model_fields_set and data.nombre is not None and data.nombre != u.nombre:
         u.nombre = data.nombre
         campos.append("nombre")
-    if "password" in data.model_fields_set:
+    if "password" in data.model_fields_set and data.password is not None:
         u.password_hash = hash_password(data.password)
         campos.append("password")  # solo el NOMBRE del campo; jamás el valor
-    if "activo" in data.model_fields_set and data.activo != u.activo:
+    if "activo" in data.model_fields_set and data.activo is not None and data.activo != u.activo:
         u.activo = data.activo
         registrar(db, admin, Accion.AUDITOR_REACTIVADO if data.activo else Accion.AUDITOR_SUSPENDIDO,
                   recurso_tipo="usuario", recurso_id=u.id, detalle={"email": u.email}, request=request, commit=False)
@@ -185,7 +185,8 @@ def forzar_reentrenamiento(
         contenido = lote.file.read(maximo + 1)  # nunca se lee más de maximo+1 bytes en memoria
         if len(contenido) > maximo:
             raise _error(413, "FILE_TOO_LARGE", f"El archivo supera {settings.ENTRENAMIENTO_MAX_MB} MB")
-        origen, fuente = f"lote subido: {lote.filename[:80]}", contenido
+        nombre_archivo = os.path.basename(lote.filename)[:80]
+        origen, fuente = f"lote subido: {nombre_archivo}", contenido
     else:
         fuente = entrenamiento.ruta_dataset_defecto()
         if not fuente.is_file():
@@ -204,14 +205,27 @@ def forzar_reentrenamiento(
     db.add(fila)
     try:
         db.flush()
-        registrar(db, admin, Accion.MODELO_REENTRENAMIENTO, recurso_tipo="modelo", recurso_id=fila.id, request=request, commit=False,
-                  detalle={"version": version, "origen": origen, "activar_si_mejora": activar_si_mejora})
+        registrar(
+            db, admin, Accion.MODELO_REENTRENAMIENTO,
+            recurso_tipo="modelo", recurso_id=fila.id, request=request, commit=False,
+            detalle={"version": version, "origen": origen, "activar_si_mejora": activar_si_mejora},
+        )
         db.commit()
     except IntegrityError:  # otro admin lanzó uno en el mismo instante (índice único parcial)
         db.rollback()
         raise _error(409, "TRAINING_IN_PROGRESS", "Ya hay un reentrenamiento en curso")
 
-    ruta = entrenamiento.guardar_lote_subido(contenido, version) if contenido is not None else fuente
+    try:
+        ruta = entrenamiento.guardar_lote_subido(contenido, version) if contenido is not None else fuente
+    except OSError:
+        log.exception("No se pudo guardar el lote subido para la versión v%s", version)
+        fila.estado = EstadoModelo.FALLIDO.value
+        fila.etapa = None
+        fila.error = "No se pudo guardar el archivo del lote en el servidor"
+        fila.finalizado_en = datetime.now(timezone.utc)
+        db.commit()
+        raise _error(500, "UPLOAD_SAVE_FAILED", "No se pudo guardar el archivo del lote en el servidor")
+
     background_tasks.add_task(entrenamiento.ejecutar_entrenamiento, fila.id, str(ruta), activar_si_mejora, admin.id)
     db.refresh(fila)
     return fila
@@ -219,6 +233,7 @@ def forzar_reentrenamiento(
 
 @router.get("/modelos/{modelo_id}", response_model=ModelVersionOut)
 def ver_modelo(modelo_id: int, db: Session = Depends(get_db)):
+    modelos.marcar_huerfanos(db)
     v = db.get(ModelVersion, modelo_id)
     if v is None:
         raise _error(404, "NOT_FOUND", "Versión no encontrada")
@@ -299,25 +314,35 @@ def health(db: Session = Depends(get_db)):
     """Estado de los servicios. Nunca devuelve rutas del servidor, cadenas de conexión ni trazas."""
     servicios: list[ServicioHealth] = [ServicioHealth(nombre="API", estado="ok", detalle="Respondiendo")]
 
+    db_ok = True
     t0 = time.perf_counter()
     try:
         db.execute(text("SELECT 1"))
         servicios.append(ServicioHealth(nombre="Base de datos", estado="ok", detalle="Conexión correcta",
                                         latencia_ms=round((time.perf_counter() - t0) * 1000, 1)))
     except Exception:
+        db_ok = False
         log.exception("Health: falla la base de datos")
         servicios.append(ServicioHealth(nombre="Base de datos", estado="error", detalle="No responde"))
 
     t0 = time.perf_counter()
     try:
         m = cargar_modelo()
-        activo = modelos.version_activa(db)
+        activo = modelos.version_activa(db) if db_ok else None
+        estado_ver = (
+            (f"versión {activo.version} activa" if activo else "archivo base (sin versión registrada)")
+            if db_ok
+            else "versión en BD no verificable"
+        )
         servicios.append(ServicioHealth(
             nombre="Modelo", estado="ok", latencia_ms=round((time.perf_counter() - t0) * 1000, 1),
-            detalle=f"{m.tipo} cargado · " + (f"versión {activo.version} activa" if activo else "archivo base (sin versión registrada)"),
+            detalle=f"{m.tipo} cargado · {estado_ver}",
         ))
     except ModeloNoDisponible as exc:
-        servicios.append(ServicioHealth(nombre="Modelo", estado="advertencia", detalle=f"No disponible ({exc.motivo}): la explicabilidad SHAP responderá 503"))
+        servicios.append(ServicioHealth(
+            nombre="Modelo", estado="advertencia",
+            detalle=f"No disponible ({exc.motivo}): las predicciones y la explicabilidad SHAP responderán 503",
+        ))
     except Exception:
         log.exception("Health: falla del modelo")
         servicios.append(ServicioHealth(nombre="Modelo", estado="error", detalle="Error inesperado al comprobar el modelo"))
@@ -335,8 +360,16 @@ def health(db: Session = Depends(get_db)):
         servicios.append(ServicioHealth(nombre="Almacenamiento de modelos", estado="error",
                                         detalle="La carpeta de modelos no existe o no es escribible: no se podrá reentrenar"))
 
-    en_curso = db.execute(select(ModelVersion.version).where(ModelVersion.estado == EstadoModelo.ENTRENANDO.value)).scalar()
-    servicios.append(ServicioHealth(nombre="Entrenamiento", estado="ok", detalle=f"En curso (v{en_curso})" if en_curso else "Sin trabajos en curso"))
+    if db_ok:
+        en_curso = db.execute(
+            select(ModelVersion.version).where(ModelVersion.estado == EstadoModelo.ENTRENANDO.value)
+        ).scalars().first()
+        detalle_entrenamiento = f"En curso (v{en_curso})" if en_curso else "Sin trabajos en curso"
+        estado_entrenamiento = "ok"
+    else:
+        detalle_entrenamiento = "No verificable sin conexión a la base de datos"
+        estado_entrenamiento = "advertencia"
+    servicios.append(ServicioHealth(nombre="Entrenamiento", estado=estado_entrenamiento, detalle=detalle_entrenamiento))
 
     libs = {n: _version_paquete(n) for n in ("lightgbm", "shap", "scikit-learn", "pandas")}
     faltan = [n for n, v in libs.items() if v == "no instalado"]

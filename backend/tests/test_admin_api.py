@@ -53,18 +53,66 @@ with SessionLocal() as db:
     dueno = Usuario(nombre="Carla Dueña", email="carla@mype.pe", rol=Rol.DUENO_MYPE, password_hash=hash_password("Clave12345!"))
     db.add_all([admin, aud1, aud2, dueno]); db.commit()
     ids = dict(admin=admin.id, aud1=aud1.id, aud2=aud2.id, dueno=dueno.id)
-    ev = Evaluacion(user_id=dueno.id, is_guest=False, respuestas={"regimen": "rer", "sector_economico": "comercio", "emite_comprobantes": "nunca", "ingresos_mensuales": 9000},
-                    nivel_riesgo="Alto", probabilidad=0.9, score=10, recomendaciones=[], sector_economico="comercio")
+    ev = Evaluacion(
+        user_id=dueno.id,
+        is_guest=False,
+        respuestas={
+            "tipo_contribuyente": "MYPE",
+            "sector_economico": "comercio",
+            "antiguedad_anos": 3,
+            "numero_empleados_formales": 4,
+            "ingresos_declarados": 90000,
+            "gastos_deducibles": 76500,
+            "ratio_gastos_ingresos": 0.85,
+            "porcentaje_efectivo": 70,
+            "margen_utilidad_declarado": 0.15,
+            "facturas_anuladas": 6,
+            "porcentaje_notas_credito": 18,
+            "compras_proveedores_nuevos_pct": 45,
+            "concentracion_cliente_principal": 55,
+            "historial_auditoria": "Con observaciones",
+            "retraso_declaracion_dias": 12,
+            "declaraciones_rectificatorias": 3,
+        },
+        nivel_riesgo="Alto",
+        probabilidad=0.9,
+        score=10,
+        recomendaciones=[],
+        sector_economico="comercio",
+    )
     db.add(ev); db.commit(); ev_id = ev.id
 
-# dataset sintético coherente con el cuestionario (regla simple + ruido)
+# dataset sintético coherente con el esquema actual de 16 columnas (regla simple + ruido)
 rnd = random.Random(7)
-filas = ["regimen,sector_economico,emite_comprobantes,ingresos_mensuales,riesgo"]
+cols_csv = [
+    "tipo_contribuyente", "sector_economico", "antiguedad_anos", "numero_empleados_formales",
+    "ingresos_declarados", "gastos_deducibles", "ratio_gastos_ingresos", "porcentaje_efectivo",
+    "margen_utilidad_declarado", "facturas_anuladas", "porcentaje_notas_credito",
+    "compras_proveedores_nuevos_pct", "concentracion_cliente_principal", "historial_auditoria",
+    "retraso_declaracion_dias", "declaraciones_rectificatorias", "riesgo",
+]
+filas = [",".join(cols_csv)]
 for _ in range(240):
-    r = rnd.choice(["nrus", "rer", "rmt", "general"]); s = rnd.choice(["comercio", "servicios", "manufactura", "transporte"])
-    c = rnd.choice(["siempre", "a_veces", "nunca"]); i = rnd.randint(500, 60000)
-    p = 0.1 + (0.5 if c == "nunca" else 0.2 if c == "a_veces" else 0) + (0.2 if i > 30000 else 0)
-    filas.append(f"{r},{s},{c},{i},{int(rnd.random() < p)}")
+    tc = rnd.choice(["Persona Natural", "MYPE", "SAC"])
+    sec = rnd.choice(["comercio", "servicios", "manufactura", "transporte"])
+    ant = rnd.randint(1, 15)
+    emp = rnd.randint(0, 30)
+    ing = rnd.randint(10000, 300000)
+    ratio = round(rnd.uniform(0.30, 0.95), 2)
+    gastos = round(ing * ratio, 2)
+    efec = rnd.randint(5, 95)
+    margen = round(1.0 - ratio, 2)
+    anul = rnd.randint(0, 15)
+    nc = rnd.randint(0, 35)
+    prov = rnd.randint(0, 80)
+    conc = rnd.randint(10, 90)
+    hist = rnd.choice(["Nunca", "Sin hallazgos", "Con observaciones"])
+    retr = rnd.randint(0, 30)
+    rect = rnd.randint(0, 6)
+    p = 0.1 + (0.45 if efec > 55 else 0.0) + (0.25 if hist == "Con observaciones" else 0.0) + (0.15 if retr > 15 else 0.0)
+    filas.append(
+        f"{tc},{sec},{ant},{emp},{ing},{gastos},{ratio},{efec},{margen},{anul},{nc},{prov},{conc},{hist},{retr},{rect},{int(rnd.random() < p)}"
+    )
 CSV = "\n".join(filas)
 (S / "dataset.csv").write_text(CSV)
 
@@ -246,7 +294,7 @@ assert U1.get(f"/api/evaluaciones/{ev_id}/shap").status_code == 200
 assert A.post(f"/api/admin/modelos/{v1['id']}/activar").json()["modelo"]["estado"] == "ACTIVO"
 assert {v["version"]: v["estado"] for v in A.get("/api/admin/modelos").json()["versiones"]}[v2["version"]] == "ARCHIVADO"
 # con un modelo activo, el lote debe traer SUS columnas (compatibilidad con la API)
-r = subir(CSV.replace("emite_comprobantes", "otra_col", 1).encode()); assert r.status_code == 422 and "emite_comprobantes" in r.json()["detail"]["message"], r.text
+r = subir(CSV.replace("historial_auditoria", "otra_col", 1).encode()); assert r.status_code == 422 and "historial_auditoria" in r.json()["detail"]["message"], r.text
 # estados no activables / inexistentes
 fallido = next(v for v in A.get("/api/admin/modelos").json()["versiones"] if v["estado"] == "FALLIDO")
 assert A.post(f"/api/admin/modelos/{fallido['id']}/activar").status_code == 422

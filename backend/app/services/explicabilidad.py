@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +21,9 @@ log = logging.getLogger(__name__)
 
 RAIZ_BACKEND = Path(__file__).resolve().parents[2]
 _PREGUNTAS = {p["id"]: p for p in PREGUNTAS}
+_CACHE_MAXSIZE = 2
+_CACHE_MODELO: dict[tuple[Path, int], ModeloCargado] = {}
+_LOCK_CARGA = threading.Lock()
 
 
 class ModeloNoDisponible(Exception):
@@ -45,12 +48,17 @@ class ModeloCargado:
 
 
 def ruta_modelo() -> Path:
-    """Modelo que sirve la API: la versión ACTIVA del registro (panel MLOps) o, si no hay, MODELO_PATH."""
+    """Modelo que sirve la API: la versión ACTIVA del registro (panel MLOps) o, fuera de prod, MODELO_PATH."""
     from app.services.modelos import ruta_activa  # import perezoso: modelos.py importa este módulo
 
     activa = ruta_activa()
     if activa is not None:
         return activa
+    if settings.ENV == "prod":
+        log.error("No hay modelo ACTIVO disponible en producción; se deshabilita el fallback a MODELO_PATH")
+        raise ModeloNoDisponible("archivo_ausente")
+    if not settings.MODELO_PATH:
+        raise ModeloNoDisponible("archivo_ausente")
     p = Path(settings.MODELO_PATH)
     return p if p.is_absolute() else RAIZ_BACKEND / p
 
@@ -77,9 +85,7 @@ def cargar_modelo() -> ModeloCargado:
     return cargar_modelo_de(ruta, mtime)
 
 
-# lru_cache NO guarda excepciones: si el modelo aún no estaba, basta con copiarlo; no hace falta reiniciar.
-@lru_cache(maxsize=2)
-def cargar_modelo_de(ruta: Path, _mtime_ns: int = 0) -> ModeloCargado:
+def _cargar_desde_disco(ruta: Path) -> ModeloCargado:
     if not ruta.is_file():
         raise ModeloNoDisponible("archivo_ausente")
     try:
@@ -133,7 +139,31 @@ def cargar_modelo_de(ruta: Path, _mtime_ns: int = 0) -> ModeloCargado:
         raise ModeloNoDisponible("carga") from exc
 
 
-cargar_modelo.cache_clear = cargar_modelo_de.cache_clear  # compatibilidad con el uso anterior
+def cargar_modelo_de(ruta: Path, _mtime_ns: int = 0) -> ModeloCargado:
+    """Caché sincronizada con lock: evita cargas duplicadas en arranque en frío y no cachea excepciones."""
+    clave = (ruta, _mtime_ns)
+    cargado = _CACHE_MODELO.get(clave)
+    if cargado is not None:
+        return cargado
+
+    with _LOCK_CARGA:
+        cargado = _CACHE_MODELO.get(clave)
+        if cargado is not None:
+            return cargado
+        cargado = _cargar_desde_disco(ruta)
+        if len(_CACHE_MODELO) >= _CACHE_MAXSIZE:
+            _CACHE_MODELO.pop(next(iter(_CACHE_MODELO)))
+        _CACHE_MODELO[clave] = cargado
+        return cargado
+
+
+def _limpiar_cache_modelo() -> None:
+    with _LOCK_CARGA:
+        _CACHE_MODELO.clear()
+
+
+cargar_modelo_de.cache_clear = _limpiar_cache_modelo
+cargar_modelo.cache_clear = _limpiar_cache_modelo  # compatibilidad con el uso anterior
 
 
 def precalentar() -> None:
@@ -144,11 +174,14 @@ def precalentar() -> None:
     except ModeloNoDisponible as exc:
         log.info("Explicabilidad sin precalentar (%s)", exc.motivo)
 
-
 # ------------------------------------------------------------------ cálculo
 
 def _sigmoide(x: float) -> float:
-    return 1.0 / (1.0 + math.exp(-x))
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
 
 
 def _finito(x: Any) -> float | None:

@@ -1,10 +1,10 @@
 """Registro de versiones del modelo: cuál está activo, cómo se activa y cómo se recupera de un cierre brusco."""
 import hashlib
 import logging
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.models.model_version import EstadoModelo, ModelVersion
-from app.services.cuestionario import PREGUNTAS
+from app.services.almacenamiento import AlmacenamientoError, ArchivoAlteradoError, asegurar_local, carpeta_local
 from app.services.explicabilidad import ModeloNoDisponible, cargar_modelo_de
-from app.services.almacenamiento import AlmacenamientoError, asegurar_local, carpeta_local
+
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ class ActivacionInvalida(Exception):
 
 def carpeta_modelos() -> Path:
     return carpeta_local()
+
 
 def ruta_de(v: ModelVersion) -> Path:
     # Solo el NOMBRE del archivo: aunque la BD contuviera "../../etc/x", jamás se sale de la carpeta de modelos.
@@ -43,17 +44,23 @@ def sha256_de(ruta: Path) -> str:
 
 # ------------------------------------------------------------ modelo activo (consultado por SHAP en cada petición)
 _TTL_S = 15  # con varios workers, otro proceso notaría una activación en <= 15 s
-_cache: dict = {"hasta": 0.0, "ruta": None}
+_cache_lock = threading.Lock()
+_cache: dict = {"hasta": 0.0, "ruta": None, "version": 0}
 
 
 def invalidar_cache() -> None:
-    _cache["hasta"] = 0.0
+    with _cache_lock:
+        _cache["hasta"] = 0.0
+        _cache["version"] += 1
 
 
 def ruta_activa() -> Path | None:
     ahora = time.monotonic()
-    if ahora < _cache["hasta"]:
-        return _cache["ruta"]
+    with _cache_lock:
+        if ahora < _cache["hasta"]:
+            return _cache["ruta"]
+        version_leida = _cache["version"]
+
     ruta = None
     cachear = True
     try:
@@ -72,19 +79,26 @@ def ruta_activa() -> Path | None:
     except Exception:
         log.exception("No se pudo consultar el modelo activo")
         cachear = False
+
     if cachear:
-        _cache.update(hasta=ahora + _TTL_S, ruta=ruta)
+        with _cache_lock:
+            if _cache["version"] == version_leida:
+                _cache["hasta"] = time.monotonic() + _TTL_S
+                _cache["ruta"] = ruta
     return ruta
 
+
 def version_activa(db: Session) -> ModelVersion | None:
-    return db.execute(select(ModelVersion).where(ModelVersion.estado == EstadoModelo.ACTIVO.value)).scalar_one_or_none()
+    return db.execute(
+        select(ModelVersion).where(ModelVersion.estado == EstadoModelo.ACTIVO.value)
+    ).scalar_one_or_none()
 
 
 # ------------------------------------------------------------ activación / rollback
 def activar(db: Session, v: ModelVersion, admin_id: int | None) -> list[str]:
     """
     Pone `v` como modelo activo (sirve también para volver a una versión anterior). Antes de cambiar nada comprueba que
-    el archivo exista, no haya sido alterado y se pueda cargar: nunca se activa un modelo que luego falle en producción.
+    el archivo exista, no haya sido alterado, sea cargable y coincida con el esquema de features del cuestionario.
     Devuelve advertencias (no bloqueantes). NO hace commit: lo hace el llamador junto con la bitácora.
     """
     if v.estado not in (EstadoModelo.CANDIDATO.value, EstadoModelo.ARCHIVADO.value, EstadoModelo.ACTIVO.value):
@@ -93,54 +107,45 @@ def activar(db: Session, v: ModelVersion, admin_id: int | None) -> list[str]:
 
     try:
         ruta = asegurar_local(v.archivo, v.sha256)
+    except ArchivoAlteradoError as exc:
+        raise ActivacionInvalida("MODEL_FILE_ALTERED", str(exc)) from exc
     except AlmacenamientoError as exc:
         raise ActivacionInvalida("MODEL_FILE_MISSING", str(exc)) from exc
+
     if not ruta.is_file():
-        raise ActivacionInvalida("MODEL_FILE_MISSING", "El archivo de esta versión ya no existe en el servidor.")
+        raise ActivacionInvalida("MODEL_FILE_MISSING", "El archivo del modelo no existe en el servidor.")
+
     if v.sha256 and sha256_de(ruta) != v.sha256:
         raise ActivacionInvalida("MODEL_FILE_ALTERED", "El archivo no coincide con la huella registrada; no se activará.")
-
+    
     try:
         cargado = cargar_modelo_de(ruta, ruta.stat().st_mtime_ns)
     except ModeloNoDisponible as exc:
         raise ActivacionInvalida("MODEL_NOT_LOADABLE", f"El modelo no se pudo cargar ({exc.motivo}).") from exc
 
-
-    # Advertencia: columnas que el cuestionario ni el pipeline de features producen => SHAP respondería FEATURES_MISSING.
-    conocidas = {p["id"] for p in PREGUNTAS} | {
-        "regimen",
-        "sector_economico",
-        "emite_comprobantes",
-        "ingresos_mensuales",
-        "tipo_contribuyente",
-        "sector_economico",
-        "antiguedad_anos",
-        "numero_empleados_formales",
-        "ingresos_declarados",
-        "gastos_deducibles",
-        "ratio_gastos_ingresos",
-        "porcentaje_efectivo",
-        "margen_utilidad_declarado",
-        "facturas_anuladas",
-        "porcentaje_notas_credito",
-        "compras_proveedores_nuevos_pct",
-        "concentracion_cliente_principal",
-        "historial_auditoria",
-        "retraso_declaracion_dias",
-        "declaraciones_rectificatorias"
-    }
-    ajenas = [c for c in cargado.columnas if c not in conocidas]
-    advertencias = []
-    if ajenas:
-        advertencias.append(
-            "El modelo usa columnas que el cuestionario no recoge (" + ", ".join(ajenas) + "): "
-            "revisa construir_features o la explicabilidad fallará."
+    if cargado.idx_clase is None:
+        raise ActivacionInvalida(
+            "MODEL_NOT_LOADABLE",
+            "El modelo cargado no expone una clase de riesgo compatible con MODELO_CLASE_RIESGO.",
         )
 
+    from app.services.modelo_riesgo import construir_features_modelo  # fuente única de verdad del esquema
+
+    features_soportadas = set(construir_features_modelo({}).keys())
+    ajenas = [c for c in cargado.columnas if c not in features_soportadas]
+    if ajenas:
+        raise ActivacionInvalida(
+            "MODEL_SCHEMA_MISMATCH",
+            "El modelo exige columnas que el cuestionario no genera (" + ", ".join(ajenas) + "); no se activará.",
+        )
+
+    advertencias: list[str] = []
     ahora = datetime.now(timezone.utc)
     if v.estado != EstadoModelo.ACTIVO.value:
         db.execute(  # el índice único parcial exige liberar al anterior ANTES de activar el nuevo
-            update(ModelVersion).where(ModelVersion.estado == EstadoModelo.ACTIVO.value).values(estado=EstadoModelo.ARCHIVADO.value)
+            update(ModelVersion)
+            .where(ModelVersion.estado == EstadoModelo.ACTIVO.value)
+            .values(estado=EstadoModelo.ARCHIVADO.value)
         )
         db.flush()
         v.estado = EstadoModelo.ACTIVO.value
@@ -161,8 +166,12 @@ def marcar_huerfanos(db: Session, *, todos: bool = False) -> int:
     if not todos:
         cond.append(ModelVersion.creado_en < limite)
     r = db.execute(
-        update(ModelVersion).where(*cond).values(
-            estado=EstadoModelo.FALLIDO.value, etapa=None, finalizado_en=datetime.now(timezone.utc),
+        update(ModelVersion)
+        .where(*cond)
+        .values(
+            estado=EstadoModelo.FALLIDO.value,
+            etapa=None,
+            finalizado_en=datetime.now(timezone.utc),
             error="El entrenamiento se interrumpió (reinicio o tiempo agotado del servidor).",
         )
     )

@@ -13,11 +13,14 @@ BCRYPT_ROUNDS = 12  # costo adaptativo: cada +1 duplica el tiempo de cálculo
 # tiempo de respuesta sea igual que con un usuario real (evita enumeración por timing).
 _DUMMY_HASH = bcrypt.hashpw(b"contrasena-falsa", bcrypt.gensalt(BCRYPT_ROUNDS)).decode()
 
+MAX_PASSWORD_BYTES = 72
 
 def hash_password(plain: str) -> str:
     """Bcrypt aplica un salt aleatorio por contraseña, embebido en el propio hash."""
-    return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt(BCRYPT_ROUNDS)).decode("utf-8")
-
+    raw = plain.encode("utf-8")
+    if len(raw) > MAX_PASSWORD_BYTES:
+        raise ValueError("La contraseña excede el máximo de 72 bytes en UTF-8")
+    return bcrypt.hashpw(raw, bcrypt.gensalt(BCRYPT_ROUNDS)).decode("utf-8")
 
 def verify_password(plain: str, hashed: str | None) -> bool:
     """Comparación en tiempo constante. Sin hash real (usuario inexistente) valida contra el falso y devuelve False."""

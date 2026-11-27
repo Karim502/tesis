@@ -14,12 +14,14 @@ from app.services.bitacora import registrar
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-_COOKIE_OPTS = dict(
-    httponly=True,                       # inaccesible desde JS (anti-XSS)
-    secure=settings.COOKIE_SECURE,       # solo por HTTPS en producción
-    samesite=settings.COOKIE_SAMESITE,   # "lax" en local, "none" en prod cross-site
-    path="/",
-)
+
+def _cookie_opts() -> dict:
+    return dict(
+        httponly=True,                       # inaccesible desde JS (anti-XSS)
+        secure=settings.COOKIE_SECURE,       # solo por HTTPS en producción
+        samesite=settings.COOKIE_SAMESITE,   # "lax" en local, "none" en prod cross-site
+        path="/",
+    )
 
 
 @router.post("/login", response_model=UserOut)
@@ -40,7 +42,10 @@ def login(request: Request, response: Response, data: LoginRequest, db: Session 
 
     token = create_access_token(user.id, user.rol.value)
     response.set_cookie(
-        settings.COOKIE_NAME, token, max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60, **_COOKIE_OPTS
+        settings.COOKIE_NAME,
+        token,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        **_cookie_opts(),
     )
     response.headers["Cache-Control"] = "no-store"  # ningún proxy/navegador cachea la respuesta
     registrar(
@@ -57,15 +62,11 @@ def login(request: Request, response: Response, data: LoginRequest, db: Session 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response):
-    response.delete_cookie(
-        settings.COOKIE_NAME,
-        path="/",
-        httponly=True,
-        secure=settings.COOKIE_SECURE,
-        samesite=settings.COOKIE_SAMESITE,
-    )
+    response.delete_cookie(settings.COOKIE_NAME, **_cookie_opts())
+
 
 @router.get("/me", response_model=UserOut)
-def me(user: Usuario = Depends(get_current_user)):
+def me(response: Response, user: Usuario = Depends(get_current_user)):
     """El frontend lo usa al cargar para recuperar la sesión sin leer el token."""
+    response.headers["Cache-Control"] = "no-store"
     return user

@@ -83,15 +83,12 @@ export default function SurveyForm({ modo = "usuario" }) {
     setErrorEnvio(null);
   };
 
-  const enviar = async () => {
+const enviar = async () => {
     setEnviando(true);
     setErrorEnvio(null);
     try {
       const payload = normalizarRespuestas(preguntas, respuestas);
 
-      console.log("1. Lo que guardó el formulario:", respuestas);
-      console.log("2. Lo que sale del normalizador (payload):", payload);
-      
       if (invitado) {
         const resultado = await evaluacionApi.crearInvitado(payload);
         guardarResultadoInvitado(resultado);

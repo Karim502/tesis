@@ -10,8 +10,7 @@ const qs = (obj) => {
 
 export const adminApi = {
   // ── Eje A · Auditores
-  listarAuditores: (f, { signal } = {}) => apiFetch(`/admin/auditores${qs(f)}`, { signal }),
-  crearAuditor: (data) => apiFetch("/admin/auditores", { method: "POST", body: data }),
+  listarAuditores: (f = {}, { signal } = {}) => apiFetch(`/admin/auditores${qs(f)}`, { signal }),  crearAuditor: (data) => apiFetch("/admin/auditores", { method: "POST", body: data }),
   actualizarAuditor: (id, data) => apiFetch(`/admin/auditores/${id}`, { method: "PATCH", body: data }),
   eliminarAuditor: (id) => apiFetch(`/admin/auditores/${id}`, { method: "DELETE" }),
 
@@ -27,6 +26,6 @@ export const adminApi = {
   activarModelo: (id) => apiFetch(`/admin/modelos/${id}/activar`, { method: "POST" }),
 
   // ── Eje C · Monitoreo
-  logs: (f, { signal } = {}) => apiFetch(`/admin/logs${qs(f)}`, { signal }),
+  logs: (f = {}, { signal } = {}) => apiFetch(`/admin/logs${qs(f)}`, { signal }),
   health: ({ signal } = {}) => apiFetch("/admin/health", { signal }),
 };
